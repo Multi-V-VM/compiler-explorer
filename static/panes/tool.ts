@@ -22,24 +22,26 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import _ from 'underscore';
+import * as fileSaver from 'file-saver';
+import {Container} from 'golden-layout';
 import $ from 'jquery';
-import {ga} from '../analytics.js';
-import * as AnsiToHtml from '../ansi-to-html.js';
-import {Toggles} from '../widgets/toggles.js';
-import * as Components from '../components.js';
 import * as monaco from 'monaco-editor';
+import _ from 'underscore';
+import {CompilationResult} from '../../types/compilation/compilation.interfaces.js';
+import {CompilerInfo} from '../../types/compiler.interfaces.js';
+import {LanguageKey} from '../../types/languages.interfaces.js';
+import * as AnsiToHtml from '../ansi-to-html.js';
+import {unwrap, unwrapString} from '../assert.js';
+import {CompilerService} from '../compiler-service.js';
+import {ComponentConfig, NewToolSettings, TOOL_INPUT_VIEW_COMPONENT_NAME, ToolState} from '../components.interfaces.js';
+import * as Components from '../components.js';
+import {Hub} from '../hub.js';
 import * as monacoConfig from '../monaco-config.js';
 import {options as ceoptions} from '../options.js';
 import * as utils from '../utils.js';
-import * as fileSaver from 'file-saver';
-import {MonacoPane} from './pane.js';
-import {Hub} from '../hub.js';
-import {Container} from 'golden-layout';
+import {Toggles} from '../widgets/toggles.js';
 import {MonacoPaneState} from './pane.interfaces.js';
-import {CompilerService} from '../compiler-service.js';
-import {ComponentConfig, PopulatedToolInputViewState} from '../components.interfaces.js';
-import {unwrap, unwrapString} from '../assert.js';
+import {MonacoPane} from './pane.js';
 
 function makeAnsiToHtml(color?: string) {
     return new AnsiToHtml.Filter({
@@ -66,7 +68,7 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
     normalAnsiToHtml: AnsiToHtml.Filter;
     optionsField: JQuery;
     localStdinField: JQuery;
-    createToolInputView: () => ComponentConfig<PopulatedToolInputViewState>;
+    createToolInputView: () => ComponentConfig<typeof TOOL_INPUT_VIEW_COMPONENT_NAME>;
 
     wrapButton: JQuery;
     wrapTitle: JQuery;
@@ -115,16 +117,8 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
         return $('#tool-output').html();
     }
 
-    override registerOpeningAnalyticsEvent() {
-        ga.proxy('send', {
-            hitType: 'event',
-            eventCategory: 'OpenViewPane',
-            eventAction: 'Tool',
-        });
-    }
-
     override createEditor(editorRoot: HTMLElement) {
-        return monaco.editor.create(
+        this.editor = monaco.editor.create(
             editorRoot,
             monacoConfig.extendConfig({
                 readOnly: true,
@@ -140,6 +134,10 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
                 },
             }),
         );
+    }
+
+    override getPrintName() {
+        return 'Tool Output';
     }
 
     override registerDynamicElements(state: ToolState) {
@@ -182,14 +180,14 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
         }
     }
 
-    onLanguageChange(editorId, newLangId) {
+    onLanguageChange(editorId: number | boolean, newLangId: LanguageKey) {
         if (this.compilerInfo.editorId && this.compilerInfo.editorId === editorId) {
             const tools = ceoptions.tools[newLangId];
-            this.toggleUsable(tools && tools[this.toolId]);
+            this.toggleUsable(!!tools?.[this.toolId]);
         }
     }
 
-    toggleUsable(isUsable) {
+    toggleUsable(isUsable: boolean) {
         if (isUsable) {
             this.plainContentRoot.css('opacity', '1');
             this.badLangToolbar.hide();
@@ -202,7 +200,7 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
     }
 
     initArgs(state: ToolState & MonacoPaneState) {
-        const optionsChange = _.debounce(e => {
+        const optionsChange = _.debounce((e: any) => {
             this.onOptionsChange();
 
             this.eventHub.emit('toolSettingsChange', this.compilerInfo.compilerId);
@@ -255,9 +253,8 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
     getInputStdin() {
         if (!this.monacoStdin) {
             return unwrapString(this.localStdinField.val());
-        } else {
-            return this.monacoStdinField;
         }
+        return this.monacoStdinField;
     }
 
     openMonacoEditor() {
@@ -358,7 +355,7 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
 
     override getCurrentState() {
         const options = this.getEffectiveOptions();
-        const state: MonacoPaneState & ToolState = {
+        const state: NewToolSettings = {
             ...super.getCurrentState(),
             wrap: options.wrap,
             toolId: this.toolId,
@@ -370,7 +367,7 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
             monacoEditorHasBeenAutoOpened: this.monacoEditorHasBeenAutoOpened,
             argsPanelShown: !this.panelArgs.hasClass('d-none'),
         };
-        return state as MonacoPaneState;
+        return state;
     }
 
     setLanguage(languageId: false | string) {
@@ -398,7 +395,13 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
         );
     }
 
-    override onCompiler(compilerId: number, compiler: any, options: string, editorId: number, treeId: number) {
+    override onCompiler(
+        compilerId: number,
+        compiler: CompilerInfo | null,
+        options: string,
+        editorId: number,
+        treeId: number,
+    ) {
         // TODO(jeremy-rifkin): This should probably be done in the base pane / standard across all panes
         if (this.compilerInfo.compilerId !== compilerId) return;
         this.compilerInfo.compilerName = compiler ? compiler.name : '';
@@ -407,28 +410,25 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
         this.updateTitle();
     }
 
-    override onCompileResult(id: number, compiler, result) {
+    override onCompileResult(id: number, compiler: CompilerInfo, result: CompilationResult) {
         try {
             if (id !== this.compilerInfo.compilerId) return;
-            if (compiler) this.compilerInfo.compilerName = compiler.name;
 
             const foundTool = _.find(compiler.tools, tool => tool.tool.id === this.toolId);
 
-            this.toggleUsable(foundTool);
+            this.toggleUsable(!!foundTool);
 
             // any for now for typing reasons... TODO(jeremy-rifkin)
             let toolResult: any = null;
-            if (result && result.tools) {
+            if (result.tools) {
                 toolResult = _.find(result.tools, tool => tool.id === this.toolId);
-            } else if (result && result.result && result.result.tools) {
+            } else if (result.result?.tools) {
                 toolResult = _.find(result.result.tools, tool => tool.id === this.toolId);
             }
 
             // any for now for typing reasons... TODO(jeremy-rifkin)
             let toolInfo: any = null;
-            if (compiler && compiler.tools) {
-                toolInfo = _.find(compiler.tools, tool => tool.tool.id === this.toolId);
-            }
+            toolInfo = _.find(compiler.tools, tool => tool.tool.id === this.toolId);
 
             if (toolInfo) {
                 this.toggleStdin.prop('disabled', false);
@@ -519,8 +519,7 @@ export class Tool extends MonacoPane<monaco.editor.IStandaloneCodeEditor, ToolSt
         if (lineNum && this.compilerInfo.editorId) {
             elem.empty();
             const editorId = unwrap(this.compilerInfo.editorId);
-            $('<a></a>')
-                .prop('href', 'javascript:;')
+            $('<span class="linked-compiler-output-line"></span>')
                 .html(msg)
                 .on('click', e => {
                     this.eventHub.emit('editorSetDecoration', editorId, lineNum, true, column);

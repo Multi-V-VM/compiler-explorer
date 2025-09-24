@@ -22,14 +22,14 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import {expect} from 'chai';
 import express from 'express';
+import request from 'supertest';
+import {beforeAll, describe, expect, it} from 'vitest';
 
-import {withAssemblyDocumentationProviders} from '../../lib/handlers/assembly-documentation.js';
-import {chai} from '../utils.js';
+import {AssemblyDocumentationController} from '../../lib/handlers/api/assembly-documentation-controller.js';
 
 /** Test matrix of architecture to [opcode, tooptip, html, url] */
-export const TEST_MATRIX: Record<PropertyKey, [string, string, string, string][]> = {
+const TEST_MATRIX: Record<PropertyKey, [string, string, string, string][]> = {
     6502: [
         [
             'lda',
@@ -55,12 +55,20 @@ export const TEST_MATRIX: Record<PropertyKey, [string, string, string, string][]
             'https://developer.arm.com/documentation/',
         ],
     ],
+    aarch64: [
+        [
+            'mov',
+            'Read active elements from the source predicate',
+            '<p>Read active elements from the source predicate',
+            'https://developer.arm.com/documentation/',
+        ],
+    ],
     avr: [
         [
             'mov',
             'Copy Register',
             'makes a copy of one register into another',
-            'https://ww1.microchip.com/downloads/en/DeviceDoc/AVR-InstructionSet-Manual-DS40002198.pdf',
+            'https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/ReferenceManuals/AVR-InstructionSet-Manual-DS40002198.pdf',
         ],
     ],
     java: [
@@ -79,57 +87,88 @@ export const TEST_MATRIX: Record<PropertyKey, [string, string, string, string][]
             'https://llvm.org/docs/LangRef.html#ret-instruction',
         ],
     ],
+    ptx: [
+        [
+            'add',
+            'Add two values.',
+            '<p>Performs addition and writes the resulting value into a destination register.</p>',
+            '',
+        ],
+    ],
+    powerpc: [
+        [
+            'addc',
+            'Add Carrying',
+            '<p>The <strong>addc</strong> and <strong>a</strong> instructions place the sum of the contents of general-purpose register (GPR) <em>RA</em> and GPR <em>RB</em> into the target GPR <em>RT</em>.</p>',
+            'https://www.ibm.com/docs/en/aix/7.3?topic=set-addc-add-carrying-instruction',
+        ],
+    ],
+    sass: [
+        [
+            'FADD',
+            'FP32 Add',
+            'FP32 Add',
+            'https://docs.nvidia.com/cuda/cuda-binary-utilities/index.html#instruction-set-reference',
+        ],
+    ],
+    wdc65c816: [
+        [
+            'jsl',
+            'Jump to Subroutine Long',
+            '<p>Jump to Subroutine Long</p>',
+            'https://www.pagetable.com/c64ref/6502/?cpu=65c816',
+        ],
+    ],
 };
 
 describe('Assembly Documentation API', () => {
     let app: express.Express;
 
-    before(() => {
+    beforeAll(() => {
         app = express();
-        const router = express.Router();
-        withAssemblyDocumentationProviders(router);
-        app.use('/api', router);
+        const controller = new AssemblyDocumentationController();
+        app.use('/', controller.createRouter());
     });
 
     it('should return 404 for unknown architecture', async () => {
-        const res = await chai.request(app).get(`/api/asm/not_an_arch/mov`).set('Accept', 'application/json');
-        expect(res).to.have.status(404);
-        expect(res).to.be.json;
-        expect(res.body).to.deep.equal({error: `No documentation for 'not_an_arch'`});
+        await request(app)
+            .get('/api/asm/not_an_arch/mov')
+            .set('Accept', 'application/json')
+            .expect('Content-Type', /json/)
+            .expect(404, {error: `No documentation for 'not_an_arch'`});
     });
 
     for (const [arch, cases] of Object.entries(TEST_MATRIX)) {
         for (const [opcode, tooltip, html, url] of cases) {
             it(`should process ${arch} text requests`, async () => {
-                const res = await chai.request(app).get(`/api/asm/${arch}/${opcode}`).set('Accept', 'text/plain');
-                expect(res).to.have.status(200);
-                expect(res).to.be.html;
-                expect(res.text).to.contain(html);
+                const res = await request(app)
+                    .get(`/api/asm/${arch}/${opcode}`)
+                    .set('Accept', 'text/plain')
+                    .expect('Content-Type', /html/)
+                    .expect(200);
+                expect(res.text).toContain(html);
             });
-
             it(`should process ${arch} json requests`, async () => {
-                const res = await chai.request(app).get(`/api/asm/${arch}/${opcode}`).set('Accept', 'application/json');
-
-                expect(res).to.have.status(200);
-                expect(res).to.be.json;
-                expect(res.body.html).to.contain(html);
-                expect(res.body.tooltip).to.contain(tooltip);
-                expect(res.body.url).to.contain(url);
+                const res = await request(app)
+                    .get(`/api/asm/${arch}/${opcode}`)
+                    .set('Accept', 'application/json')
+                    .expect('Content-Type', /json/)
+                    .expect(200);
+                expect(res.body.html).toContain(html);
+                expect(res.body.tooltip).toContain(tooltip);
+                expect(res.body.url).toContain(url);
             });
 
             it(`should return 404 for ${arch} unknown opcode requests`, async () => {
-                const res = await chai
-                    .request(app)
+                await request(app)
                     .get(`/api/asm/${arch}/not_an_opcode`)
-                    .set('Accept', 'application/json');
-                expect(res).to.have.status(404);
-                expect(res).to.be.json;
-                expect(res.body).to.deep.equal({error: "Unknown opcode 'NOT_AN_OPCODE'"});
+                    .set('Accept', 'application/json')
+                    .expect('Content-Type', /json/)
+                    .expect(404, {error: "Unknown opcode 'NOT_AN_OPCODE'"});
             });
 
             it(`should return 406 for ${arch} bad accept type requests`, async () => {
-                const res = await chai.request(app).get(`/api/asm/${arch}/${opcode}`).set('Accept', 'application/pdf');
-                expect(res).to.have.status(406);
+                await request(app).get(`/api/asm/${arch}/${opcode}`).set('Accept', 'application/pdf').expect(406);
             });
         }
     }

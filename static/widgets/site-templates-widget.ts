@@ -22,19 +22,25 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+import GoldenLayout from 'golden-layout';
 import $ from 'jquery';
-import {SiteTemplatesType} from '../../types/features/site-templates.interfaces.js';
-import {assert, unwrap} from '../assert.js';
+import {escapeHTML} from '../../shared/common-utils.js';
+import {SiteTemplateConfiguration, UserSiteTemplate} from '../../types/features/site-templates.interfaces.js';
+import {assert, unwrap, unwrapString} from '../assert.js';
+import * as BootstrapUtils from '../bootstrap-utils.js';
+import {localStorage} from '../local.js';
 import {Settings} from '../settings.js';
+import * as url from '../url.js';
+import {getStaticImage} from '../utils';
+import {Alert} from './alert.js';
 
 class SiteTemplatesWidget {
-    modal: JQuery;
-    img: HTMLImageElement;
-    templatesConfig: null | SiteTemplatesType = null;
-    populated = false;
-    siteTemplateScreenshots: any;
-    constructor(siteTemplateScreenshots: any) {
-        this.siteTemplateScreenshots = siteTemplateScreenshots;
+    private readonly modal: JQuery;
+    private readonly img: HTMLImageElement;
+    private readonly alertSystem: Alert;
+    private templatesConfig: null | SiteTemplateConfiguration = null;
+    private populated = false;
+    constructor(private readonly layout: GoldenLayout) {
         this.modal = $('#site-template-loader');
         const siteTemplatePreview = document.getElementById('site-template-preview');
         if (siteTemplatePreview === null) {
@@ -43,10 +49,31 @@ class SiteTemplatesWidget {
         }
         assert(siteTemplatePreview instanceof HTMLImageElement);
         this.img = siteTemplatePreview;
+        this.alertSystem = new Alert();
+        this.modal.find('#add-user-template').on('click', this.saveCurrentAsTemplate.bind(this));
+    }
+    saveCurrentAsTemplate() {
+        const config = this.layout.toConfig();
+        const data = url.serialiseState(config);
+        this.alertSystem.enterSomething('Template Name', '', '', {
+            yes: name => {
+                const userTemplates: Record<string, UserSiteTemplate> = JSON.parse(
+                    localStorage.get('userSiteTemplates', '{}'),
+                );
+                let timestamp = Date.now();
+                while (`t${timestamp}` in userTemplates) timestamp++;
+                userTemplates[`t${timestamp}`] = {
+                    title: unwrapString(name),
+                    data,
+                };
+                localStorage.set('userSiteTemplates', JSON.stringify(userTemplates));
+                this.populateUserTemplates();
+            },
+        });
     }
     async getTemplates() {
         if (this.templatesConfig === null) {
-            this.templatesConfig = await new Promise<SiteTemplatesType>((resolve, reject) => {
+            this.templatesConfig = await new Promise<SiteTemplateConfiguration>((resolve, reject) => {
                 $.getJSON(window.location.origin + window.httpRoot + 'api/siteTemplates', resolve);
             });
         }
@@ -57,53 +84,90 @@ class SiteTemplatesWidget {
         if (!theme) {
             // apparently this can happen
             return 'default';
-        } else if (theme === 'system') {
+        }
+        if (theme === 'system') {
             if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
                 return 'dark';
-            } else {
-                return 'default';
             }
-        } else {
-            return theme;
+            return 'default';
         }
+        return theme;
     }
     getAsset(name: string) {
-        return this.siteTemplateScreenshots(`./${name}.${this.getCurrentTheme()}.png`);
+        return getStaticImage(`${name}.${this.getCurrentTheme()}.png`, 'template_screenshots');
+    }
+    getDefaultAsset() {
+        return 'https://placehold.jp/30/4b4b4b/ffffff/1000x800.png?text=we%27ll+support+screenshot+generation+for+user+templates+some+day';
     }
     async setDefaultPreview() {
         const templatesConfig = await this.getTemplates(); // by the time this is called it will be cached
-        const first = Object.entries(templatesConfig.templates)[0][0]; // preview the first entry
-        this.img.src = this.getAsset(first.replace(/[^a-z]/gi, ''));
+        const first = templatesConfig.templates[0].id; // preview the first entry
+        this.img.src = this.getAsset(first) ?? this.getDefaultAsset();
     }
-    async populate() {
-        const templatesConfig = await this.getTemplates();
-        const root = $('#site-templates-list');
-        root.empty();
-        for (const [name, data] of Object.entries(templatesConfig.templates)) {
-            root.append(`<li data-data="${data}" data-name="${name.replace(/[^a-z]/gi, '')}">${name}</li>`);
+    populateUserTemplates() {
+        const userTemplates: Record<string, UserSiteTemplate> = JSON.parse(localStorage.get('userSiteTemplates', '{}'));
+        const userTemplatesList = $('#site-user-templates-list');
+        userTemplatesList.empty();
+        if (Object.entries(userTemplates).length === 0) {
+            userTemplatesList.append('<span>Nothing here yet</span>');
+        } else {
+            for (const [id, {title, data}] of Object.entries(userTemplates)) {
+                const li = $('<li></li>');
+                $(`<div class="title">${escapeHTML(title)}</div>`)
+                    .attr('data-data', data)
+                    .appendTo(li);
+                $(`<div class="delete" data-id="${id}"><i class="fa-solid fa-trash"></i></div>`).appendTo(li);
+                li.appendTo(userTemplatesList);
+            }
+            userTemplatesList.find('li .delete').on('click', e => {
+                const userTemplates: Record<string, UserSiteTemplate> = JSON.parse(
+                    localStorage.get('userSiteTemplates', '{}'),
+                );
+                delete userTemplates[unwrap($(e.target).parent('.delete').attr('data-id'))];
+                localStorage.set('userSiteTemplates', JSON.stringify(userTemplates));
+                this.populate();
+            });
         }
-        for (const li of root.find('li')) {
-            const li_copy = li;
-            li.addEventListener(
+    }
+    async populateSiteTemplates() {
+        const templatesConfig = await this.getTemplates();
+        const siteTemplatesList = $('#site-templates-list');
+        siteTemplatesList.empty();
+        for (const {name, id, reference} of templatesConfig.templates) {
+            // Note: Trusting the server-provided data attribute
+            siteTemplatesList.append(
+                '<li>' +
+                    `<div class="title" data-id="${id}" data-data="${reference}" data-name="${name}">${escapeHTML(name)}</div>` +
+                    '</li>',
+            );
+        }
+        for (const titleDiv of $('#site-user-templates-list li .title, #site-templates-list li .title')) {
+            const titleDivCopy = titleDiv;
+            titleDiv.addEventListener(
                 'mouseover',
                 () => {
-                    this.img.src = this.getAsset(unwrap(li_copy.getAttribute('data-name')));
+                    const id = titleDivCopy.getAttribute('data-id');
+                    this.img.src = id !== null ? (this.getAsset(id) ?? this.getDefaultAsset()) : this.getDefaultAsset();
                 },
                 false,
             );
-            li.addEventListener(
+            titleDiv.addEventListener(
                 'click',
                 () => {
                     window.location.href =
-                        window.location.origin + window.httpRoot + '#' + li_copy.getAttribute('data-data');
+                        window.location.origin + window.httpRoot + '#' + titleDivCopy.getAttribute('data-data');
                 },
                 false,
             );
         }
+    }
+    async populate() {
+        this.populateUserTemplates();
+        await this.populateSiteTemplates();
         this.populated = true;
     }
     show() {
-        this.modal.modal('show');
+        BootstrapUtils.showModal(this.modal);
         if (!this.populated) {
             this.populate();
         }
@@ -111,8 +175,8 @@ class SiteTemplatesWidget {
     }
 }
 
-export function setupSiteTemplateWidgetButton(siteTemplateScreenshots: any) {
-    const siteTemplateModal = new SiteTemplatesWidget(siteTemplateScreenshots);
+export function setupSiteTemplateWidgetButton(layout: GoldenLayout) {
+    const siteTemplateModal = new SiteTemplatesWidget(layout);
     $('#loadSiteTemplate').on('click', () => {
         siteTemplateModal.show();
     });

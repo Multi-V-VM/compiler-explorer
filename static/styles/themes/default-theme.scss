@@ -1,4 +1,6 @@
-@import '~golden-layout/src/css/goldenlayout-light-theme';
+@use 'sass:color';
+
+html[data-theme='default'] {
 
 /*
  * replace low res golden-layout icons with svg recreations to improve high DPI displays
@@ -117,18 +119,16 @@ a.navbar-brand img.logo.normal {
 
 .rainbow-decoration {
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
-    background-image: -webkit-gradient(
-        linear,
-        left top,
-        right bottom,
-        color-stop(0, red),
-        color-stop(16%, orange),
-        color-stop(32%, yellow),
-        color-stop(48%, green),
-        color-stop(60%, blue),
-        color-stop(76%, indigo),
-        color-stop(1, violet)
+    background-image: linear-gradient(
+        60deg,
+        #ed4242 0,
+        #ffaa44 20%,
+        #fff344 40%,
+        #43a35b 60%,
+        #447cff 80%,
+        #9c44a9 100%
     );
 }
 
@@ -167,16 +167,16 @@ a.navbar-brand img.logo.normal {
 .notification-error {
     background-color: indianred;
     color: white;
-    .close {
-        color: white;
+    .btn-close {
+        filter: invert(100%);
     }
 }
 
 .notification-on {
     background-color: green;
     color: #fff;
-    .close {
-        color: white;
+    .btn-close {
+        filter: invert(100%);
     }
 }
 
@@ -185,18 +185,31 @@ a.navbar-brand img.logo.normal {
     color: black;
 }
 
-.opt-decoration {
-    &.analysis,
-    &.mixed {
+.stack-usage {
+    &.static {
         background: #fdfd96;
     }
 
-    &.passed {
+    &.dynamic {
         background: #77dd77;
     }
 
-    &.missed {
+    &.dynamic_bounded {
         background: #ff6961;
+    }
+}
+
+.opt-line {
+    &.analysis {
+        background: #ffffae;
+    }
+
+    &.passed {
+        background: #a9ffa9;
+    }
+
+    &.missed {
+        background: #f8cac8;
     }
 }
 
@@ -245,14 +258,25 @@ a.navbar-brand img.logo.normal {
 
 #socialshare .share-twitter,
 .share-twitter {
-    background-color: #1da1f2;
-    color: white;
+    background-color: #4C566A !important; /* Cool neutral gray */
+    color: #ffffff !important;
+    text-decoration: none !important;
+
+
+}
+
+#socialshare .share-bluesky,
+.share-bluesky {
+    background-color: #5E81AC !important; /* Soft desaturated steel blue */
+    color: #ffffff !important;
+    text-decoration: none !important;
 }
 
 #socialshare .share-reddit,
 .share-reddit {
-    background-color: #ff4500;
-    color: white;
+    background-color: #BF616A !important; /* Soft muted crimson */
+    color: #ffffff !important;
+    text-decoration: none !important;
 }
 
 .share-disabled {
@@ -318,10 +342,6 @@ div.argmenuitem span.argdescription {
     color: black;
 }
 
-.linked-compiler-output-line {
-    color: #007bfd;
-}
-
 .logo-pri {
     fill: #67c52a;
 }
@@ -334,7 +354,7 @@ div.argmenuitem span.argdescription {
     color: #007bfd;
 }
 
-.conformance-wrapper .compiler-list .form-row {
+.conformance-wrapper .compiler-list .row {
     border-bottom: 1px solid #e3e3e3;
 }
 
@@ -375,13 +395,18 @@ div.argmenuitem span.argdescription {
     background-color: #dae0e5;
 }
 
+.dropdown-item.active {
+    background-color: #007bfd;
+    color: white;
+}
+
 .currentCursorPosition {
     color: #15a3b9;
-    background-color: darken(rgba(248, 249, 250, 0.85), 3%);
+    background-color: color.adjust(rgba(248, 249, 250, 0.85), $lightness: -3%);
     border: 1px solid #d2d3d4;
 }
 
-.llvm-opt-pipeline-body {
+.opt-pipeline-body {
     .passes-column {
         color: black;
         border-right: 1px solid #d2d3d4;
@@ -396,7 +421,7 @@ div.argmenuitem span.argdescription {
             }
             &:hover,
             &.active {
-                background: lighten(#f5f5f5, 5%);
+                background: color.adjust(#f5f5f5, $lightness: 5%);
             }
             &.changed {
                 color: #148624;
@@ -427,7 +452,7 @@ div.argmenuitem span.argdescription {
     .compilers-col .group-wrapper .group {
         .label {
             // taking the color tom-select uses, but I find that a little low-contrast
-            background: darken(#f6f6f6, 3%);
+            background: color.adjust(#f6f6f6, $lightness: -3%);
         }
         .compiler {
             &:hover {
@@ -447,3 +472,26 @@ div.argmenuitem span.argdescription {
         }
     }
 }
+
+.compiler-arg-warning-icon {
+    color: #ff6a10 !important;
+}
+
+.compiler-arg-warning {
+    border-color: #ff6a10;
+    &:before {
+        border-color: #ff6a10;
+        background: #ff6a10;
+    }
+    &.info {
+        border-color: #3f92ff;
+        &:before {
+            border-color: #3f92ff;
+            background: #3f92ff;
+            content: '\f05a';
+            color: rgb(20, 21, 22);
+        }
+    }
+}
+
+} // End html[data-theme='default']

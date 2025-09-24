@@ -24,8 +24,46 @@
 
 import _ from 'underscore';
 
-import type {ResultLine} from '../../../types/resultline/resultline.interfaces.js';
-import {BaseInstructionSetInfo} from '../instruction-sets/base.js';
+import {EdgeColor} from '../../../types/compilation/cfg.interfaces.js';
+import {CompilationResult} from '../../../types/compilation/compilation.interfaces.js';
+import type {ResultLineSource} from '../../../types/resultline/resultline.interfaces.js';
+import {logger} from '../../logger.js';
+import {BaseInstructionSetInfo, InstructionType} from '../instruction-sets/base.js';
+
+export type Range = {
+    start: number;
+    end: number;
+};
+
+export type BBRange = {
+    nameId: string;
+    start: number;
+    end: number;
+    actionPos: number[];
+};
+
+export type CanonicalBB = {
+    nameId: string;
+    start: number;
+    end: number;
+};
+
+export type Node = {
+    id: string;
+    label: string;
+};
+
+export type Edge = {
+    from: string;
+    to: string;
+    arrows: string;
+    color: EdgeColor;
+};
+
+export type AssemblyLine = {
+    text: string;
+    source?: ResultLineSource | undefined;
+};
 
 export class BaseCFGParser {
     static get key() {
@@ -34,11 +72,86 @@ export class BaseCFGParser {
 
     constructor(public readonly instructionSetInfo: BaseInstructionSetInfo) {}
 
-    isFunctionName(line: ResultLine) {
-        return line.text.trim().indexOf('.') !== 0;
+    public filterData(assembly: AssemblyLine[]): AssemblyLine[] {
+        const jmpLabelRegex = /\.L\d+:/;
+        const isCode = (x: AssemblyLine) =>
+            x?.text && (x.source !== null || jmpLabelRegex.test(x.text) || this.isFunctionName(x));
+        return this.filterTextSection(assembly).map(_.clone).filter(isCode);
     }
 
-    getAsmDirective(txt: string) {
+    public splitToFunctions(asmArr: AssemblyLine[]): Range[] {
+        if (asmArr.length === 0) return [];
+        const result: Range[] = [];
+        let first = 1;
+        const last = asmArr.length;
+        const fnRange: Range = {start: 0, end: 0};
+        while (first !== last) {
+            if (this.isFunctionEnd(asmArr[first].text)) {
+                fnRange.end = first;
+                if (fnRange.end > fnRange.start + 1) result.push(_.clone(fnRange));
+                fnRange.start = first;
+            }
+            ++first;
+        }
+
+        fnRange.end = last;
+        if (fnRange.end > fnRange.start + 1) result.push(_.clone(fnRange));
+        return result;
+    }
+
+    protected getBbId(firstInst: string): string {
+        return firstInst;
+    }
+
+    protected getBbFirstInstIdx(firstLine: number) {
+        //inst is expected to be .L*: where * in 1,2,...
+        return firstLine + 1;
+    }
+
+    protected splitToBasicBlocks(asmArr: AssemblyLine[], range: Range) {
+        let first = range.start;
+        const last = range.end;
+        if (first === last) return [];
+        const functionName = asmArr[first].text;
+        ++first;
+
+        let rangeBb: BBRange = {nameId: functionName, start: first, end: 0, actionPos: []};
+        const result: BBRange[] = [];
+
+        const newRangeWith = (oldRange: BBRange, nameId: string, start: number) => ({
+            nameId: nameId,
+            start: start,
+            actionPos: [],
+            end: oldRange.end,
+        });
+
+        while (first < last) {
+            const inst = asmArr[first].text;
+            const prevInst = asmArr[first - 1] ? asmArr[first - 1].text : '';
+            if (this.isBasicBlockEnd(inst, prevInst)) {
+                rangeBb.end = first;
+                result.push(_.clone(rangeBb));
+                rangeBb = newRangeWith(rangeBb, this.getBbId(inst), this.getBbFirstInstIdx(first));
+            } else if (this.instructionSetInfo.isJmpInstruction(inst)) {
+                rangeBb.actionPos.push(first);
+            }
+            ++first;
+        }
+
+        rangeBb.end = last;
+        result.push(_.clone(rangeBb));
+        return result;
+    }
+
+    protected isFunctionName(line: AssemblyLine) {
+        return line.text.trim().indexOf('.') !== 0 || line.text.startsWith('.omp_');
+    }
+
+    public async processFuncNames(code: AssemblyLine[], fullRes?: CompilationResult): Promise<AssemblyLine[]> {
+        return code;
+    }
+
+    protected getAsmDirective(txt: string) {
         const pattern = /^\s*(\.[^ L]\S*)/;
         const match = txt.match(pattern);
         if (match !== null) {
@@ -47,9 +160,9 @@ export class BaseCFGParser {
         return null;
     }
 
-    filterTextSection(data: ResultLine[]) {
+    protected filterTextSection(data: AssemblyLine[]): AssemblyLine[] {
         let useCurrentSection = true;
-        const result: ResultLine[] = [];
+        const result: AssemblyLine[] = [];
         for (const i in data) {
             const x = data[i];
             const directive = this.getAsmDirective(x.text);
@@ -71,21 +184,158 @@ export class BaseCFGParser {
         return result;
     }
 
-    filterData(assembly: ResultLine[]) {
-        const jmpLabelRegex = /\.L\d+:/;
-        const isCode = x => x && x.text && (x.source !== null || jmpLabelRegex.test(x.text) || this.isFunctionName(x));
-        return this.filterTextSection(assembly).map(_.clone).filter(isCode);
+    protected isFunctionEnd(x: string) {
+        return x[0] !== ' ' && (x[0] !== '.' || x.startsWith('.omp_')) && x.includes(':');
     }
 
-    isFunctionEnd(x: string) {
-        return x[0] !== ' ' && x[0] !== '.' && x.includes(':');
-    }
-
-    isBasicBlockEnd(inst: string, prevInst: string) {
+    protected isBasicBlockEnd(inst: string, prevInst: string) {
         return inst[0] === '.' || prevInst.includes(' ret');
     }
 
-    extractNodeName(inst: string) {
+    protected extractJmpTargetName(inst: string) {
         return inst.match(/\.L\d+/) + ':';
+    }
+
+    protected extractNodeIdFromInst(inst: string) {
+        return inst;
+    }
+
+    protected extractAltJmpTargetName(asmArr: AssemblyLine[], bbIdx: number, arrBB: CanonicalBB[]): string {
+        const hasName = (asmArr: AssemblyLine[], cbb: CanonicalBB) => {
+            const asm = asmArr[cbb.end];
+            return asm ? this.isBasicBlockEnd(asm.text, '') : false;
+        };
+
+        const generateName = (name: string, suffix: number) => {
+            const pos = name.indexOf('@');
+            if (pos === -1) return `${name}@${suffix}`;
+
+            return name.substring(0, pos + 1) + suffix;
+        };
+        const bb = arrBB[bbIdx];
+        return hasName(asmArr, bb) ? asmArr[bb.end].text : generateName(bb.nameId, bb.end);
+    }
+
+    protected splitToCanonicalBasicBlock(basicBlock: BBRange): CanonicalBB[] {
+        const actionPos = basicBlock.actionPos;
+        let actPosSz = actionPos.length;
+        if (actionPos[actPosSz - 1] + 1 === basicBlock.end) {
+            --actPosSz;
+        }
+
+        if (actPosSz === 0)
+            return [
+                {
+                    nameId: basicBlock.nameId,
+                    start: basicBlock.start,
+                    end: basicBlock.end,
+                },
+            ];
+        if (actPosSz === 1)
+            return [
+                {nameId: basicBlock.nameId, start: basicBlock.start, end: actionPos[0] + 1},
+                {nameId: basicBlock.nameId + '@' + (actionPos[0] + 1), start: actionPos[0] + 1, end: basicBlock.end},
+            ];
+
+        let first = 0;
+        const last = actPosSz;
+        const blockName = basicBlock.nameId;
+        let tmp: CanonicalBB = {nameId: blockName, start: basicBlock.start, end: actionPos[first] + 1};
+        const result: CanonicalBB[] = [];
+        result.push(_.clone(tmp));
+        while (first !== last - 1) {
+            tmp.nameId = blockName + '@' + (actionPos[first] + 1);
+            tmp.start = actionPos[first] + 1;
+            ++first;
+            tmp.end = actionPos[first] + 1;
+            result.push(_.clone(tmp));
+        }
+
+        tmp = {nameId: blockName + '@' + (actionPos[first] + 1), start: actionPos[first] + 1, end: basicBlock.end};
+        result.push(_.clone(tmp));
+
+        return result;
+    }
+
+    protected concatInstructions(asmArr: AssemblyLine[], first: number, last: number) {
+        return asmArr
+            .slice(first, last)
+            .map(x => x.text)
+            .join('\n');
+    }
+
+    protected makeNodes(asms: AssemblyLine[], arrOfCanonicalBasicBlock: CanonicalBB[]): Node[] {
+        return arrOfCanonicalBasicBlock.map(e => ({
+            id: e.nameId,
+            label: `${e.nameId}${e.nameId.includes(':') ? '' : ':'}\n${this.concatInstructions(asms, e.start, e.end)}`,
+        }));
+    }
+
+    protected makeEdges(asmArr: AssemblyLine[], arrOfCanonicalBasicBlock: CanonicalBB[]) {
+        const edges: Edge[] = [];
+
+        const setEdge = (sourceNode: string, targetNode: string, color: EdgeColor) => ({
+            from: sourceNode,
+            to: targetNode,
+            arrows: 'to',
+            color: color,
+        });
+
+        /* note: x.end-1 possible values:
+            jmp .L*, {jne,je,jg,...} .L*, ret/rep ret, call and any other instruction that doesn't change control flow
+        */
+
+        for (const [i, x] of arrOfCanonicalBasicBlock.entries()) {
+            const lastInst = asmArr[x.end - 1].text;
+            switch (this.instructionSetInfo.getInstructionType(lastInst)) {
+                case InstructionType.jmp: {
+                    //we have to deal only with jmp destination, jmp instruction are always taken.
+                    //edge from jump inst
+                    const targetNode = this.extractJmpTargetName(lastInst);
+                    edges.push(setEdge(x.nameId, targetNode, 'blue'));
+                    break;
+                }
+                case InstructionType.conditionalJmpInst: {
+                    //deal with : branch taken, branch not taken
+                    const targetNode1 = this.extractJmpTargetName(lastInst);
+                    edges.push(setEdge(x.nameId, targetNode1, 'green'));
+                    const targetNode2 = this.extractAltJmpTargetName(asmArr, i, arrOfCanonicalBasicBlock);
+                    edges.push(setEdge(x.nameId, targetNode2, 'red'));
+                    break;
+                }
+                case InstructionType.notRetInst: {
+                    //precondition: lastInst is not last instruction in asmArr (but it is in canonical basic block)
+                    //note : asmArr[x.end] expected to be .L*:(name of a basic block)
+                    //       this .L*: has to be exactly after the last instruction in the current canonical basic block
+                    if (asmArr[x.end]) {
+                        const targetNode = this.extractNodeIdFromInst(asmArr[x.end].text);
+                        edges.push(setEdge(x.nameId, targetNode, 'grey'));
+                    }
+                    break;
+                }
+                case InstructionType.retInst: {
+                    break;
+                }
+            }
+        }
+        logger.debug(edges);
+        return edges;
+    }
+
+    public generateFunctionCfg(code: AssemblyLine[], fn: Range) {
+        const basicBlocks = this.splitToBasicBlocks(code, fn);
+        let arrOfCanonicalBasicBlock: CanonicalBB[] = [];
+        for (const bb of basicBlocks) {
+            const tmp = this.splitToCanonicalBasicBlock(bb);
+            arrOfCanonicalBasicBlock = arrOfCanonicalBasicBlock.concat(tmp);
+        }
+        return {
+            nodes: this.makeNodes(code, arrOfCanonicalBasicBlock),
+            edges: this.makeEdges(code, arrOfCanonicalBasicBlock),
+        };
+    }
+
+    public getFnName(code: AssemblyLine[], fn: Range) {
+        return code[fn.start].text;
     }
 }

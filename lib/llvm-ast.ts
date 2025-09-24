@@ -81,17 +81,16 @@ export class LlvmAstParser {
                 const begin = this.parsePoint(beginEnd[0], lastLineNo);
                 const end = this.parsePoint(beginEnd[1], begin.line);
                 return {type: LlvmAstParser.locTypes.SPAN, begin, end};
-            } else {
-                return {type: LlvmAstParser.locTypes.POINT, loc: this.parsePoint(span, lastLineNo)};
             }
+            return {type: LlvmAstParser.locTypes.POINT, loc: this.parsePoint(span, lastLineNo)};
         }
         return {type: LlvmAstParser.locTypes.NONE};
     }
 
     // Link the AST lines with spans of source locations (lines+columns)
     parseAndSetSourceLines(astDump: ResultLine[]) {
-        let lfrom: any = {line: null, loc: null},
-            lto: any = {line: null, loc: null};
+        let lfrom: any = {line: null, loc: null};
+        let lto: any = {line: null, loc: null};
         for (const line of astDump) {
             const span = this.parseSpan(line.text, lfrom.line);
             switch (span.type) {
@@ -116,7 +115,7 @@ export class LlvmAstParser {
         }
     }
 
-    processAst(result: CompilationResult) {
+    processAst(result: CompilationResult): ResultLine[] {
         const output = result.stdout;
 
         // Top level decls start with |- or `-
@@ -124,8 +123,6 @@ export class LlvmAstParser {
 
         // Refers to the user's source file rather than a system header
         const sourceRegex = /<source>/g;
-
-        const slocRegex = /<<invalid sloc>>/;
 
         // <<invalid sloc>, /app/hell.hpp:5:1>
         const userSource = /<<invalid sloc>, \/app\/.*:\d+:\d+>/;
@@ -139,7 +136,28 @@ export class LlvmAstParser {
         // Refers to whatever the most recent file specified was
         const lineRegex = /<(col|line):/;
 
+        // Intra-line filters
+        const addressRegex = /^([^A-Za-z]*[A-Za-z]+) 0x[\da-z]+/gm;
+        const slocRegex2 = / ?<?<invalid sloc>>?/g;
+
         let mostRecentIsSource = false;
+
+        const isBlockUserSource = (output: ResultLine[], start: number, mostRecentIsSource: boolean) => {
+            for (let i = start + 1; i < output.length; ++i) {
+                if (topLevelRegex.test(output[i].text)) {
+                    // Scanned through the block without encountering new info
+                    return mostRecentIsSource;
+                }
+                if (systemSource.test(output[i].text)) {
+                    return false;
+                }
+                if (userSource.test(output[i].text)) {
+                    return true;
+                }
+            }
+            // Reached the end with no new info
+            return mostRecentIsSource;
+        };
 
         // Remove all AST nodes which aren't directly from the user's source code
         for (let i = 0; i < output.length; ++i) {
@@ -156,9 +174,9 @@ export class LlvmAstParser {
                         // skip ast from this source
                     } else if (userSource.test(output[i].text)) {
                         continue;
-                    } else if (!slocRegex.test(output[i].text)) {
-                        mostRecentIsSource = false;
-                        continue;
+                    } else {
+                        mostRecentIsSource = isBlockUserSource(output, i, mostRecentIsSource);
+                        if (mostRecentIsSource) continue;
                     }
 
                     let spliceMax = i + 1;
@@ -170,15 +188,13 @@ export class LlvmAstParser {
                 }
             }
             // Filter out the symbol addresses
-            const addressRegex = /^([^A-Za-z]*[A-Za-z]+) 0x[\da-z]+/gm;
-            output[i].text = output[i].text.replace(addressRegex, '$1');
+            output[i].text = output[i].text.replaceAll(addressRegex, '$1');
 
             // Filter out <invalid sloc> and <<invalid sloc>>
-            const slocRegex2 = / ?<?<invalid sloc>>?/g;
-            output[i].text = output[i].text.replace(slocRegex2, '');
+            output[i].text = output[i].text.replaceAll(slocRegex2, '');
 
             // Unify file references
-            output[i].text = output[i].text.replace(sourceRegex, 'line');
+            output[i].text = output[i].text.replaceAll(sourceRegex, 'line');
         }
         this.parseAndSetSourceLines(output);
         return output;

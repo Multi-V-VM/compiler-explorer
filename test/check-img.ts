@@ -22,29 +22,29 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 
-import {assert} from 'chai';
+import {describe, expect, it} from 'vitest';
 
 import {languages} from '../lib/languages.js';
 
-const img_dir = path.resolve('views/resources/logos');
+const img_dir = path.resolve('public/logos');
 
-function checkImage(logo) {
+function checkImage(logo: string) {
     const logoPath = path.join(img_dir, logo);
-    assert.isTrue(fs.existsSync(logoPath), `${logoPath} logo missing`);
+    expect(fs.existsSync(logoPath)).toBe(true);
 }
 
 describe('Language logo check', () => {
     for (const langId in languages) {
         const language = languages[langId];
-        if (language.logoUrl !== null) {
-            it(`check if default ${language.name} logo exists`, () => checkImage(language.logoUrl));
+        if (language.logoFilename !== null) {
+            it(`check if default ${language.name} logo exists`, () => checkImage(language.logoFilename));
         }
 
-        if (language.logoUrlDark !== null) {
-            it(`check if dark ${language.name} logo exists`, () => checkImage(language.logoUrlDark));
+        if (language.logoFilenameDark !== null) {
+            it(`check if dark ${language.name} logo exists`, () => checkImage(language.logoFilenameDark));
         }
     }
 });

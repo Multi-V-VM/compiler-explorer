@@ -22,8 +22,8 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import {isString} from '../lib/common-utils.js';
-import {parse} from '../lib/stacktrace.js';
+import {isString} from '../shared/common-utils.js';
+import {parse} from '../shared/stacktrace.js';
 
 // This file defines three assert utilities:
 // assert(condition, message?, extra_info...?): asserts condition
@@ -31,7 +31,7 @@ import {parse} from '../lib/stacktrace.js';
 // assert_type(x, class, message?, extra_info...?)
 
 function get_diagnostic() {
-    const e = new Error(); // eslint-disable-line unicorn/error-message
+    const e = new Error();
     const trace = parse(e);
     if (trace.length >= 4) {
         const invoker_frame = trace[3];
@@ -56,18 +56,17 @@ function fail(fail_message: string, user_message: string | undefined, args: any[
     if (args.length > 0) {
         try {
             assert_line += ', ' + JSON.stringify(args);
-        } catch (e) {}
+        } catch {}
     }
 
     const diagnostic = get_diagnostic();
     if (diagnostic) {
         throw new Error(assert_line + `, at ${diagnostic.file}:${diagnostic.line}`);
-    } else {
-        throw new Error(assert_line);
     }
+    throw new Error(assert_line);
 }
 
-export function assert<C>(c: C, message?: string, ...extra_info: any[]): asserts c {
+export function assert(c: unknown, message?: string, ...extra_info: any[]): asserts c {
     if (!c) {
         fail('Assertion failed', message, extra_info);
     }

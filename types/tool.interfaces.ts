@@ -57,6 +57,9 @@ export enum ArtifactType {
     zxtape = 'zxtape',
     smsrom = 'smsrom',
     timetrace = 'timetracejson',
+    c64prg = 'c64prg',
+    heaptracktxt = 'heaptracktxt',
+    gbrom = 'gbrom',
 }
 
 export type Artifact = {

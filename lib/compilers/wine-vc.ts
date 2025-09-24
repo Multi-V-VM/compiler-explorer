@@ -22,12 +22,13 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import path from 'path';
+import path from 'node:path';
 
-import type {ExecutionOptions} from '../../types/compilation/compilation.interfaces.js';
+import type {ExecutionOptionsWithEnv} from '../../types/compilation/compilation.interfaces.js';
 import type {PreliminaryCompilerInfo} from '../../types/compiler.interfaces.js';
 import type {ParseFiltersAndOutputOptions} from '../../types/features/filters.interfaces.js';
 import {BaseCompiler} from '../base-compiler.js';
+import {CompilationEnvironment} from '../compilation-env.js';
 import {MapFileReaderVS} from '../mapfiles/map-file-vs.js';
 import {VcAsmParser} from '../parsers/asm-parser-vc.js';
 import {PELabelReconstructor} from '../pe32-support.js';
@@ -39,7 +40,7 @@ export class WineVcCompiler extends BaseCompiler {
         return 'wine-vc';
     }
 
-    constructor(info: PreliminaryCompilerInfo, env) {
+    constructor(info: PreliminaryCompilerInfo, env: CompilationEnvironment) {
         info.supportsFiltersInBinary = true;
         super(info, env);
         this.asm = new VcAsmParser();
@@ -49,20 +50,25 @@ export class WineVcCompiler extends BaseCompiler {
         return 'Z:' + fn;
     }
 
-    override runCompiler(compiler: string, options: string[], inputFilename: string, execOptions: ExecutionOptions) {
+    override async runCompiler(
+        compiler: string,
+        options: string[],
+        inputFilename: string,
+        execOptions: ExecutionOptionsWithEnv,
+    ) {
         if (!execOptions) {
             execOptions = this.getDefaultExecOptions();
         }
 
         execOptions.customCwd = path.dirname(inputFilename);
         if (inputFilename.startsWith('Z:')) {
-            execOptions.customCwd = execOptions.customCwd.substr(2);
+            execOptions.customCwd = execOptions.customCwd.substring(2);
         }
 
-        return super.runCompiler(compiler, options, inputFilename, execOptions);
+        return await super.runCompiler(compiler, options, inputFilename, execOptions);
     }
 
-    override getArgumentParser() {
+    override getArgumentParserClass() {
         return VCParser;
     }
 
@@ -83,7 +89,7 @@ export class WineVcCompiler extends BaseCompiler {
             const mapFilename = outputFilename + '.map';
             const mapFileReader = new MapFileReaderVS(mapFilename);
 
-            (filters as any).preProcessBinaryAsmLines = asmLines => {
+            filters.preProcessBinaryAsmLines = (asmLines: string[]) => {
                 const reconstructor = new PELabelReconstructor(asmLines, false, mapFileReader);
                 reconstructor.run('output.s.obj');
 
@@ -98,14 +104,13 @@ export class WineVcCompiler extends BaseCompiler {
                 '/Fm' + this.filename(mapFilename),
                 '/Fe' + this.filename(this.getExecutableFilename(path.dirname(outputFilename), 'output')),
             ];
-        } else {
-            return [
-                '/nologo',
-                '/FA',
-                '/c',
-                '/Fa' + this.filename(outputFilename),
-                '/Fo' + this.filename(outputFilename + '.obj'),
-            ];
         }
+        return [
+            '/nologo',
+            '/FA',
+            '/c',
+            '/Fa' + this.filename(outputFilename),
+            '/Fo' + this.filename(outputFilename + '.obj'),
+        ];
     }
 }

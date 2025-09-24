@@ -22,11 +22,12 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import $ from 'jquery';
 import EventEmitter from 'events';
+import $ from 'jquery';
+import {editor} from 'monaco-editor';
 import {options} from '../options.js';
 import {Settings} from '../settings.js';
-import {editor} from 'monaco-editor';
+
 import IEditor = editor.IEditor;
 
 import {FontScaleState} from './fontscale.interfaces.js';
@@ -47,11 +48,7 @@ function makeFontSizeDropdown(elem: JQuery, obj: FontScale, buttonDropdown: JQue
     for (let i = 8; i <= 30; i++) {
         const item = $('<button></button>');
 
-        item.attr('data-value', i)
-            .addClass('dropdown-item btn btn-sm btn-light')
-            .text(i)
-            .appendTo(elem)
-            .on('click', onClickEvent);
+        item.attr('data-value', i).addClass('dropdown-item').text(i).appendTo(elem).on('click', onClickEvent);
 
         if (obj.scale === i) {
             item.addClass('active');
@@ -61,9 +58,9 @@ function makeFontSizeDropdown(elem: JQuery, obj: FontScale, buttonDropdown: JQue
     buttonDropdown.on('wheel', (e: any) => {
         e.preventDefault();
         let selectedId = elem.find('.active').index();
-        if (e.originalEvent.deltaY >= 0 && selectedId < elem.children().length - 1) {
+        if (e.originalEvent.deltaY < 0 && selectedId < elem.children().length - 1) {
             selectedId++;
-        } else if (e.originalEvent.deltaY < 0 && selectedId > 0) {
+        } else if (e.originalEvent.deltaY >= 0 && selectedId > 0) {
             selectedId--;
         }
         elem.children().eq(selectedId).trigger('click');
@@ -146,5 +143,6 @@ export class FontScale extends EventEmitter.EventEmitter {
     setTarget(target: JQuery | string | IEditor) {
         this.fontSelectorOrEditor = target;
         this.isFontOfStr = typeof this.fontSelectorOrEditor === 'string';
+        this.apply();
     }
 }

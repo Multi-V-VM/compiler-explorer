@@ -22,17 +22,18 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import path from 'path';
+import path from 'node:path';
 
 import Semver from 'semver';
 import _ from 'underscore';
-import fs from 'fs-extra';
 
 import type {PreliminaryCompilerInfo} from '../../types/compiler.interfaces.js';
 import type {ParseFiltersAndOutputOptions} from '../../types/features/filters.interfaces.js';
 import type {SelectedLibraryVersion} from '../../types/libraries/libraries.interfaces.js';
 import {BaseCompiler} from '../base-compiler.js';
+import {CompilationEnvironment} from '../compilation-env.js';
 import {asSafeVer} from '../utils.js';
+import {ZigParser} from './argument-parsers.js';
 
 export class ZigCompiler extends BaseCompiler {
     private readonly self_hosted_cli: boolean;
@@ -41,7 +42,7 @@ export class ZigCompiler extends BaseCompiler {
         return 'zig';
     }
 
-    constructor(info: PreliminaryCompilerInfo, env) {
+    constructor(info: PreliminaryCompilerInfo, env: CompilationEnvironment) {
         super(info, env);
         this.compiler.supportsIntel = true;
         this.compiler.supportsIrView = true;
@@ -118,9 +119,23 @@ export class ZigCompiler extends BaseCompiler {
         // strip '.s' if we aren't executing
         const name = filters.execute ? desiredName : desiredName.slice(0, -2);
 
+        // '-fno-strip' doesn't work on versions 0.7.0 - 0.9.0
+        if (this.compiler.semver) {
+            const ver = asSafeVer(this.compiler.semver);
+            if (Semver.gt(ver, '0.9.0', true) || Semver.lt(ver, '0.7.0', true)) {
+                options.push('-fno-strip');
+            }
+            if (Semver.gte(ver, '0.11.0', true) && !filters.binary) {
+                // Ensures assembtly dump, not needed up to 0.14.1 but added just in case
+                // (as of Jul 2025 needed for trunk)
+                options.push('-fllvm');
+            }
+        }
+
         if (this.self_hosted_cli) {
             // Versions after 0.6.0 use a different command line interface.
             const outputDir = path.dirname(outputFilename);
+            // -fno-strip: Do not strip debug info
             options.push('--cache-dir', outputDir, '--name', name);
 
             if (filters.binary) {
@@ -176,10 +191,14 @@ export class ZigCompiler extends BaseCompiler {
 
     override filterUserOptions(userOptions: string[]): string[] {
         const forbiddenOptions = /^(((--(cache-dir|name|output|verbose))|(-(mllvm|f(no-)?emit-))).*)$/;
-        return _.filter(userOptions, option => !forbiddenOptions.test(option));
+        return userOptions.filter(option => !forbiddenOptions.test(option));
     }
 
-    override isCfgCompiler(/*compilerVersion*/): boolean {
+    protected override getArgumentParserClass() {
+        return ZigParser;
+    }
+
+    override isCfgCompiler(): boolean {
         return true;
     }
 }

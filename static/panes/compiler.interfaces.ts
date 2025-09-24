@@ -22,7 +22,8 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import type {ConfiguredOverrides} from '../compilation/compiler-overrides.interfaces.js';
+import type {ConfiguredOverrides} from '../../types/compilation/compiler-overrides.interfaces.js';
+import {ConfiguredRuntimeTools} from '../../types/execution/execution.interfaces.js';
 import {WidgetState} from '../widgets/libs-widget.interfaces.js';
 import {MonacoPaneState} from './pane.interfaces.js';
 
@@ -36,9 +37,12 @@ export type CompilerState = WidgetState & {
     wantOptInfo?: boolean;
     lang?: string;
     overrides?: ConfiguredOverrides;
+    runtimeTools?: ConfiguredRuntimeTools;
 };
 
+// TODO(jeremy-rifkin): This omit is ugly. There should be a better way to do this.
 export type CompilerCurrentState = CompilerState &
-    MonacoPaneState & {
+    Omit<MonacoPaneState, 'id'> & {
         filters: Record<string, boolean>;
+        id?: number;
     };

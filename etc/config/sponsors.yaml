@@ -19,25 +19,33 @@ levels:
         url: https://intel.com/
         priority: 400
         topIconShowEvery: 1
-        sideBySide: true
+        displayType: SideBySide
         statsId: intel
-      - name: Sonar
-        description: Discover the power of Clean Code in your IDE with SonarLint - a free and open source IDE plugin.
-        img: https://static.ce-cdn.net/sonar/sonar-1.png
-        url: https://www.sonarsource.com/products/sonarlint/?utm_medium=paid&utm_source=compilerexplorer&utm_campaign=sonarlint&utm_content=compilerexplorer-sponsorship
+      - name: Google
+        description: Google’s mission is to organize the world's information and make it universally accessible and useful.
+        img: https://static.ce-cdn.net/google/logo_Google_FullColor_xxxhdpi_830x271px.png
+        url: https://google.com/
         topIconShowEvery: 3
-        sideBySide: true
-        statsId: sonar
-      - name: Conan
-        description: The free and open source, centralized, multi-platform package manager for C/C++
-        img: https://static.ce-cdn.net/jfrog/jfrog-and-conan-2.png
-        icon: https://static.ce-cdn.net/jfrog/conan2.png
-        icon_dark: https://static.ce-cdn.net/jfrog/conan2-dark.png
-        url: https://conan.io/?utm_source=logo&utm_medium=website&utm_campaign=godbolt&utm_term=sponsorship
-        priority: 100
+        displayType: SideBySide
+        statsId: google
+      - name: CLion
+        description: CLion is a powerful, cross-platform IDE for C and C++ that boosts your productivity – and it’s free for learning, contributing to open-source projects, creating content, developing educational courses, and programming as a hobby.
+        icon: https://static.ce-cdn.net/jetbrains/Jetbrains.png
+        icon_dark: https://static.ce-cdn.net/jetbrains/JetbrainsWhite.png
+        img: https://static.ce-cdn.net/jetbrains/ClionWhite.png
+        url: https://jb.gg/clion_ce
         topIconShowEvery: 3
-        sideBySide: true
-        statsId: conan
+        displayType: SideBySide
+        statsId: jetbrains
+      - name: Cppcon
+        description: Join the CppCon family live &amp; in-person this September in Aurora, Colorado, USA! Pre-register for CppCon 2025 at <a href="https://www.CppCon.org" target="_blank">www.CppCon.org</a>.
+        img: https://static.ce-cdn.net/cppcon/cppcon-white-gold-5.svg
+        icon: https://static.ce-cdn.net/cppcon/cppcon-blue-gold-5.svg
+        icon_dark: https://static.ce-cdn.net/cppcon/cppcon-white-gold-5.svg
+        url: https://cppcon.org/
+        displayType: SideBySide
+        topIconShowEvery: 3
+        statsId: cppcon
   - name: Patreon Legends
     description: 'These amazing people have pledged at the highest level of support. Huge thanks to these fine folks:'
     class: legendary
@@ -76,8 +84,11 @@ levels:
       - name: Molecular Matters GmbH
         url: https://liveplusplus.tech/
       - Rui Ueyama
-      - name: Rohan Verma
-        url: https://twitter.com/rohan_devarc
+      - name: Edison Design Group
+        url: https://www.edg.com/
+      - name: Daniel Jennings
+      - name: 3dB Labs
+        url: https://www.3db-labs.com/
   - name: Patreons
     description: 'Thanks to all my patrons:'
     sponsors:
@@ -396,6 +407,7 @@ levels:
       - Daniele Salvatore Albano
       - Frank Wessels
       - Michele Bianchi
+      - Piotr Fusik
       - Chandler Carruth
       - Daniel Collin
       - Deirdre Connolly
@@ -414,7 +426,7 @@ levels:
       - Michael Sartain
       - Patricia Aas
       - Rasmus
-      - Siyuan Han
+      - Siyuan.H
       - Vezel
       - lcnr
       - Abhishek Bhrushundi
@@ -439,4 +451,82 @@ levels:
       - Xavier R. Guérin
       - Vamist
       - David Capello
-
+      - Turing Eret
+      - Kris van Rens
+      - fubar
+      - dvirtz
+      - ezki
+      - Patrick Eads
+      - Ivan Pribec
+      - Ben Sunshine-Hill
+      - Sam Mish
+      - Aleš Křivák
+      - Elias Nodland
+      - Andy Bell
+      - lv426
+      - Benjamin Hannel
+      - Cupcake
+      - Rob Napier
+      - Dean Berris
+      - Andrew Tridgell
+      - Nick Gully
+      - Ryan Brott
+      - Олег Шатов
+      - Pieter van Schendel
+      - LukeHjo
+      - oldspiderdude
+      - Harish Naik
+      - Gabriel Ravier
+      - Лев Роскошин
+      - salusdano
+      - Nitin A
+      - Aaron D. Marasco
+      - Tomas Karban
+      - Abdullah Al-Kheshen
+      - Matthew Kolbe
+      - Cem Dervis
+      - Chris Barlas
+      - Dino Occhialini
+      - Gregory Popovitch
+      - Isaac Cloos
+      - Joachim Meyer
+      - Martin Pernica
+      - Matthew Nielsen
+      - Michael
+      - Mike
+      - Paul Horn
+      - Per Tillisch
+      - Tobias Neukom
+      - mason
+      - Apostolos Piperis
+      - Patrik Bachan
+      - Simon Turner
+      - Sharad Khanna
+      - Kim Gräsman
+      - Waffles The Dog
+      - Pablo Halpern
+      - Benjamin FrantzDale
+      - Jevin Sweval
+      - woobwoobwoob
+      - Drew Dormann
+      - Ryan Lee
+      - elliot
+      - Cemalettin Dervis
+      - Yuki ITO
+      - André Brand
+      - Justin Simms
+      - Andy Hu
+      - jml2k
+      - Corentin Jabot
+      - Yuxuan Chen
+      - Clinton Ingram
+      - Yunsong Wang
+      - nnshi_s
+      - Sanveer Singh
+      - Martin Pernica
+      - Sam
+      - Trevor McCulloch
+      - Michael Schmidt
+      - Anvesha Amaravati
+      - Can Cagri
+      - Passionsock

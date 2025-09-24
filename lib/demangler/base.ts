@@ -35,26 +35,27 @@ import * as utils from '../utils.js';
 import {PrefixTree} from './prefix-tree.js';
 
 export class BaseDemangler extends AsmRegex {
-    demanglerExe: string;
-    demanglerArguments: string[];
+    readonly demanglerExe: string;
+    readonly demanglerArguments: string[];
     symbolstore: SymbolStore | null;
     othersymbols: SymbolStore;
     result: ParsedAsmResult;
     input: string[];
-    includeMetadata: boolean;
-    compiler: BaseCompiler;
+    readonly includeMetadata: boolean;
+    readonly compiler: BaseCompiler;
 
-    readonly jumpDef = /(j\w+|b|bl|blx)\s+([$_a-z][\w$@]*)/i;
-    readonly callDef = /callq?\s+([$._a-z][\w$.@]*)/i;
-    readonly callPtrDef1 = /callq?.*ptr\s\[[a-z]*\s\+\s([$._a-z][\w$.@]*)]/i;
-    readonly callPtrDef2 = /callq?\s+([$*._a-z][\w$.@]*)/i;
-    readonly callPtrDef3 = /callq?.*\[qword ptr\s([$._a-z][\w$.@]*).*]/i;
-    readonly callPtrDef4 = /callq?.*qword\sptr\s\[[a-z]*\s\+\s([$._a-z][\w$.@]*)\+?\d?]/i;
+    readonly jumpDef = /(j\w+|b|bl|blx)\s+([$_a-z][\w$.@]*|"[$_a-z][\w$.@]*")/i;
+    readonly callDef = /callq?\s+([$._a-z][\w$.@]*|"[$._a-z][\w$.@]*")/i;
+    readonly callPtrDef1 = /callq?.*ptr\s\[[a-z]*\s\+\s([$._a-z][\w$.@]*|"[$._a-z][\w$.@]*")]/i;
+    readonly callPtrDef2 = /callq?\s+([$*._a-z][\w$.@]*|"[$*._a-z][\w$.@]*")/i;
+    readonly callPtrDef3 = /callq?.*\[qword ptr\s([$._a-z][\w$.@]*|"[$._a-z][\w$.@]*").*]/i;
+    readonly callPtrDef4 = /callq?.*qword\sptr\s\[[a-z]*\s\+\s([$._a-z][\w$.@]*|"[$._a-z][\w$.@]*")\+?\d?]/i;
 
     // symbols in a mov or lea command starting with an underscore
-    readonly movUnderscoreDef = /mov.*\s(_[\w$.@]*)/i;
-    readonly leaUnderscoreDef = /lea.*\s(_[\w$.@]*)/i;
-    readonly quadUnderscoreDef = /\.quad\s*(_[\w$.@]*)/i;
+    readonly movUnderscoreDef = /mov.*[\s:](_[\w$.@]*|"[\w$.@]*")/i;
+    readonly leaUnderscoreDef = /lea.*[\s:](_[\w$.@]*)/i;
+    readonly quadUnderscoreDef = /\.quad\s*(_[\w$.@]*|"[\w$.@]*")/i;
+    readonly ptrOffset = /\bptr\s*\[.+\b(_[\w$.@]*|"[\w$.@]*")\s*]/i;
 
     // E.g., ".entry _Z6squarePii("
     // E.g., ".func  (.param .b32 func_retval0) bar("
@@ -79,27 +80,14 @@ export class BaseDemangler extends AsmRegex {
         this.compiler = compiler;
     }
 
-    // Iterates over the labels, demangle the label names and updates the start and
-    // end position of the label.
-    protected demangleLabels(labels, tree: PrefixTree) {
-        if (!Array.isArray(labels) || labels.length === 0) return;
-
-        for (const [index, label] of labels.entries()) {
-            const value = label.name;
-            const newValue = tree.findExact(value);
-            if (newValue) {
-                label.name = newValue;
-                label.range.endCol = label.range.startCol + newValue.length;
-
-                // Update the startCol value for each further labels.
-                for (let j = index + 1; j < labels.length; j++) {
-                    labels[j].range.startCol += newValue.length - value.length;
-                }
-            }
-        }
+    public canDemangle() {
+        return !!this.demanglerExe;
     }
 
-    protected demangleLabelDefinitions(labelDefinitions, translations: [string, string][]) {
+    protected demangleLabelDefinitions(
+        labelDefinitions: Record<string, number> | undefined,
+        translations: [string, string][],
+    ) {
         if (!labelDefinitions) return;
 
         for (const [oldValue, newValue] of translations) {
@@ -113,6 +101,9 @@ export class BaseDemangler extends AsmRegex {
 
     protected collectLabels() {
         const symbolMatchers = [
+            // this.ptrOffset needs to be checked before the jmp test since the jumpDef regex doesn't match the mangled
+            // symbol in `qword ptr [rip + _Z...]` and instead matches the `qword`
+            this.ptrOffset,
             this.jumpDef,
             this.callPtrDef4,
             this.callPtrDef3,
@@ -125,9 +116,19 @@ export class BaseDemangler extends AsmRegex {
             this.ptxFuncDef,
             this.ptxVarDef,
         ];
-        for (let j = 0; j < this.result.asm.length; ++j) {
-            const line = this.result.asm[j].text;
+        for (const {text: line, labels} of this.result.asm) {
             if (!line) continue;
+
+            if (labels) {
+                for (const label of labels) {
+                    if (label.target !== undefined) {
+                        unwrap(this.symbolstore).add(label.target);
+                        this.othersymbols.add(label.name);
+                    } else {
+                        unwrap(this.symbolstore).add(label.name);
+                    }
+                }
+            }
 
             const labelMatch = line.match(this.labelDef);
             if (labelMatch) unwrap(this.symbolstore).add(labelMatch[labelMatch.length - 1]);
@@ -189,10 +190,22 @@ export class BaseDemangler extends AsmRegex {
         ].filter(elem => elem[0] !== elem[1]);
         if (translations.length > 0) {
             const tree = new PrefixTree(translations);
-
+            const translationsDict = Object.fromEntries(translations);
             for (const asm of this.result.asm) {
-                asm.text = tree.replaceAll(asm.text);
-                this.demangleLabels(asm.labels, tree);
+                const {newText, mapRanges, mapNames} = tree.replaceAll(asm.text);
+                asm.text = newText;
+                // We try to represent in labels.ranges the exact modifications done by replaceAll,
+                // but replaceAll sometimes modifies substrings not recognized as labels :(
+                if (asm.labels) {
+                    for (const label of asm.labels) {
+                        if (mapRanges[label.range.startCol])
+                            label.range = mapRanges[label.range.startCol][label.range.endCol] || label.range;
+                        label.name = mapNames[label.name] || label.name;
+                        if (label.target !== undefined) {
+                            label.target = translationsDict[label.target] || label.target;
+                        }
+                    }
+                }
             }
 
             this.demangleLabelDefinitions(this.result.labelDefinitions, translations);
@@ -212,14 +225,16 @@ export class BaseDemangler extends AsmRegex {
 
         if (!this.symbolstore) {
             this.symbolstore = new SymbolStore();
-            this.collectLabels();
         }
+
+        this.collectLabels();
 
         options.input = this.getInput();
 
         if (options.input === '') {
             return this.result;
         }
+
         return this.processOutput(await this.execDemangler(options));
     }
 }

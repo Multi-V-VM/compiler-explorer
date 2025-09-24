@@ -22,17 +22,18 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import * as Sentry from '@sentry/node';
+import {StorageClass} from '@aws-sdk/client-s3';
+import {Buffer} from 'buffer';
 
 import type {GetResult} from '../../types/cache.interfaces.js';
 import {logger} from '../logger.js';
-import {S3Bucket} from '../s3-handler.js';
 import type {S3HandlerOptions} from '../s3-handler.interfaces.js';
+import {S3Bucket} from '../s3-handler.js';
+import {SentryCapture} from '../sentry.js';
 
 import {BaseCache} from './base.js';
-import {StorageClass} from '@aws-sdk/client-s3';
 
-function messageFor(e) {
+function messageFor(e: any) {
     return e.message || e.toString();
 }
 
@@ -40,9 +41,15 @@ export class S3Cache extends BaseCache {
     private readonly s3: S3Bucket;
     readonly path: string;
     readonly region: string;
-    private readonly onError: (Error, string) => void;
+    private readonly onError: (error: any, msg: string) => void;
 
-    constructor(cacheName: string, bucket: string, path: string, region: string, onError?: (Error, string) => void) {
+    constructor(
+        cacheName: string,
+        bucket: string,
+        path: string,
+        region: string,
+        onError?: (error: any, msg: string) => void,
+    ) {
         super(cacheName, `S3Cache(s3://${bucket}/${path} in ${region})`, 's3');
         this.path = path;
         this.region = region;
@@ -50,7 +57,7 @@ export class S3Cache extends BaseCache {
         this.onError =
             onError ||
             ((e, op) => {
-                Sentry.captureException(e);
+                SentryCapture(e, 'S3Cache onError');
                 logger.error(`Error while trying to ${op} S3 cache: ${messageFor(e)}`);
             });
     }
@@ -71,6 +78,41 @@ export class S3Cache extends BaseCache {
         };
         try {
             await this.s3.put(key, value, this.path, options);
+        } catch (e) {
+            this.onError(e, 'write');
+        }
+    }
+
+    async putWithTTL(key: string, value: Buffer, ttlDays: number, creator?: string): Promise<void> {
+        const expiresDate = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+        const options: S3HandlerOptions = {
+            metadata: creator ? {CreatedBy: creator} : {},
+            redundancy: StorageClass.REDUCED_REDUNDANCY,
+            expires: expiresDate,
+        };
+        try {
+            await this.s3.put(key, value, this.path, options);
+        } catch (e) {
+            this.onError(e, 'write');
+        }
+    }
+
+    async putWithTTLAndPath(
+        key: string,
+        value: Buffer,
+        ttlDays: number,
+        pathPrefix: string,
+        creator?: string,
+    ): Promise<void> {
+        const expiresDate = new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000);
+        const options: S3HandlerOptions = {
+            metadata: creator ? {CreatedBy: creator} : {},
+            redundancy: StorageClass.REDUCED_REDUNDANCY,
+            expires: expiresDate,
+        };
+        try {
+            const customPath = `${this.path}/${pathPrefix}`;
+            await this.s3.put(key, value, customPath, options);
         } catch (e) {
             this.onError(e, 'write');
         }

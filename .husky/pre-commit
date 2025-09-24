@@ -1,6 +1,4 @@
-#!/bin/sh
-. "$(dirname "$0")/_/husky.sh"
-
 make prereqs
 npx lint-staged --verbose
+node ./etc/scripts/check-frontend-imports.js
 python3 ./etc/scripts/util/propscheck.py

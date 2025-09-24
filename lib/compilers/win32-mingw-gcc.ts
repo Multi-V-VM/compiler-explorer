@@ -22,12 +22,12 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import path from 'path';
+import path from 'node:path';
 
-import {BuildResult, CompilationResult, ExecutionOptions} from '../../types/compilation/compilation.interfaces.js';
+import {BuildResult, BypassCache, CacheKey, CompilationResult} from '../../types/compilation/compilation.interfaces.js';
+import {ExecutableExecutionOptions} from '../../types/execution/execution.interfaces.js';
 import {ParseFiltersAndOutputOptions} from '../../types/features/filters.interfaces.js';
-
-import {copyNeededDlls} from '../win-utils.js';
+import {copyNeededDlls} from '../binaries/win-utils.js';
 
 import {GCCCompiler} from './gcc.js';
 
@@ -36,8 +36,10 @@ export class Win32MingWGcc extends GCCCompiler {
         return 'win32-mingw-gcc';
     }
 
-    getExtraPaths(): string[] {
-        return [path.normalize(path.dirname(this.compiler.exe))];
+    override getExtraPaths(): string[] {
+        const paths: string[] = super.getExtraPaths();
+
+        return [...paths, path.normalize(path.dirname(this.compiler.exe))];
     }
 
     override optionsForFilter(
@@ -77,16 +79,7 @@ export class Win32MingWGcc extends GCCCompiler {
         );
     }
 
-    override getDefaultExecOptions(): ExecutionOptions {
-        const options = super.getDefaultExecOptions();
-        if (!options.env) options.env = {};
-        if (!options.env.PATH) options.env.PATH = '';
-        options.env.PATH = this.getExtraPaths().join(path.delimiter);
-
-        return options;
-    }
-
-    override async buildExecutableInFolder(key, dirPath: string): Promise<BuildResult> {
+    override async buildExecutableInFolder(key: CacheKey, dirPath: string): Promise<BuildResult> {
         const result = await super.buildExecutableInFolder(key, dirPath);
 
         if (result.code === 0) {
@@ -102,8 +95,12 @@ export class Win32MingWGcc extends GCCCompiler {
         return result;
     }
 
-    override async handleExecution(key, executeParameters): Promise<CompilationResult> {
+    override async handleExecution(
+        key: CacheKey,
+        executeParameters: ExecutableExecutionOptions,
+        bypassCache: BypassCache,
+    ): Promise<CompilationResult> {
         const execOptions = this.getDefaultExecOptions();
-        return super.handleExecution(key, {...executeParameters, env: execOptions.env});
+        return super.handleExecution(key, {...executeParameters, env: execOptions.env}, bypassCache);
     }
 }

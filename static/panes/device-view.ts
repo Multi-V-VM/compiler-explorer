@@ -22,34 +22,37 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import * as monaco from 'monaco-editor';
-import _ from 'underscore';
-import $ from 'jquery';
-import * as colour from '../colour.js';
-import {ga} from '../analytics.js';
-import * as monacoConfig from '../monaco-config.js';
-import TomSelect from 'tom-select';
 import GoldenLayout from 'golden-layout';
-import {Hub} from '../hub.js';
-import {MonacoPane} from './pane.js';
-import {DeviceAsmState} from './device-view.interfaces.js';
-import {MonacoPaneState} from './pane.interfaces.js';
-import {CompilerInfo} from '../../types/compiler.interfaces.js';
+import $ from 'jquery';
+import * as monaco from 'monaco-editor';
+import TomSelect from 'tom-select';
+import _ from 'underscore';
 import {CompilationResult} from '../../types/compilation/compilation.interfaces.js';
+import {CompilerInfo} from '../../types/compiler.interfaces.js';
+import {InstructionSet} from '../../types/instructionsets.js';
 import {ResultLine} from '../../types/resultline/resultline.interfaces.js';
 import {assert} from '../assert.js';
+import * as colour from '../colour.js';
+import {Hub} from '../hub.js';
+import * as monacoConfig from '../monaco-config.js';
+import * as utils from '../utils.js';
+import {Alert} from '../widgets/alert.js';
+import {Compiler} from './compiler.js';
+import {DeviceAsmState} from './device-view.interfaces.js';
+import {MonacoPaneState} from './pane.interfaces.js';
+import {MonacoPane} from './pane.js';
 
 export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, DeviceAsmState> {
-    private decorations: Record<'linkedCode', monaco.editor.IModelDeltaDecoration[]>;
+    private decorations: Record<string, monaco.editor.IModelDeltaDecoration[]>;
     private prevDecorations: string[];
     private selectedDevice: string;
     private devices: Record<string, CompilationResult> | null;
-    private colours: string[];
     private deviceCode: ResultLine[];
     private lastColours: Record<number, number>;
     private lastColourScheme: string;
     private selectize: TomSelect;
     private linkedFadeTimeoutId: NodeJS.Timeout | null;
+    private alertSystem: Alert;
 
     public constructor(hub: Hub, container: GoldenLayout.Container, state: DeviceAsmState & MonacoPaneState) {
         super(hub, container, state);
@@ -63,7 +66,6 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
         this.selectedDevice = state.device || '';
         this.devices = null;
 
-        this.colours = [];
         this.deviceCode = [];
         this.lastColours = [];
         this.lastColourScheme = '';
@@ -77,14 +79,15 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
         } else if (state.devices) {
             this.onDevices(state.devices);
         }
+        this.alertSystem = new Alert();
     }
 
     override getInitialHTML(): string {
         return $('#device').html();
     }
 
-    override createEditor(editorRoot: HTMLElement): monaco.editor.IStandaloneCodeEditor {
-        return monaco.editor.create(
+    override createEditor(editorRoot: HTMLElement): void {
+        this.editor = monaco.editor.create(
             editorRoot,
             monacoConfig.extendConfig({
                 language: 'asm',
@@ -95,12 +98,8 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
         );
     }
 
-    override registerOpeningAnalyticsEvent(): void {
-        ga.proxy('send', {
-            hitType: 'event',
-            eventCategory: 'OpenViewPane',
-            eventAction: 'DeviceAsm',
-        });
+    override getPrintName() {
+        return 'Device Output';
     }
 
     override registerEditorActions(): void {
@@ -116,13 +115,75 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
                 if (position != null) {
                     const desiredLine = position.lineNumber - 1;
                     const source = this.deviceCode[desiredLine].source;
-                    if (source && source.file == null && this.compilerInfo.editorId != null) {
-                        // a null file means it was the user's source
+                    if (source && (source.file == null || source.mainsource) && this.compilerInfo.editorId != null) {
+                        // a null file or mainsource means it was the user's source
                         this.eventHub.emit('editorLinkLine', this.compilerInfo.editorId, source.line, -1, -1, true);
                     }
                 }
             },
         });
+        this.editor.addAction({
+            id: 'viewasmdoc',
+            label: 'View assembly documentation',
+            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.F8],
+            keybindingContext: undefined,
+            // precondition: 'isAsmKeyword',
+            contextMenuGroupId: 'help',
+            contextMenuOrder: 1.5,
+            run: this.onAsmToolTip.bind(this),
+        });
+    }
+    async onAsmToolTip(ed: monaco.editor.ICodeEditor) {
+        const pos = ed.getPosition();
+        if (!pos || !ed.getModel()) return;
+        const word = ed.getModel()?.getWordAtPosition(pos);
+        if (!word || !word.word) return;
+        const opcode = word.word.toUpperCase();
+
+        function newGitHubIssueUrl(): string {
+            return (
+                'https://github.com/compiler-explorer/compiler-explorer/issues/new?title=' +
+                encodeURIComponent('[BUG] Problem with ' + opcode + ' opcode')
+            );
+        }
+
+        function appendInfo(url: string): string {
+            return (
+                '<br><br>If the documentation for this opcode is wrong or broken in some way, ' +
+                'please feel free to <a href="' +
+                newGitHubIssueUrl() +
+                '" target="_blank" rel="noopener noreferrer">' +
+                'open an issue on GitHub <sup><small class="fas fa-external-link-alt opens-new-window" ' +
+                'title="Opens in a new window"></small></sup></a>.'
+            );
+        }
+
+        try {
+            const asmHelp = await Compiler.getAsmInfo(
+                word.word,
+                this.selectedDevice.split(' ')[0].toLowerCase() as InstructionSet,
+            );
+            if (asmHelp) {
+                this.alertSystem.alert(opcode + ' help', asmHelp.html + appendInfo(asmHelp.url), {
+                    onClose: () => {
+                        ed.focus();
+                        ed.setPosition(pos);
+                    },
+                });
+            } else {
+                this.alertSystem.notify('This token was not found in the documentation. Sorry!', {
+                    group: 'notokenindocs',
+                    alertClass: 'notification-error',
+                    dismissTime: 5000,
+                });
+            }
+        } catch (error) {
+            this.alertSystem.notify('There was an error fetching the documentation for this opcode (' + error + ').', {
+                group: 'notokenindocs',
+                alertClass: 'notification-error',
+                dismissTime: 5000,
+            });
+        }
     }
 
     override registerButtons(state: DeviceAsmState): void {
@@ -151,7 +212,11 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
         this.editor.onDidChangeCursorSelection(e => cursorSelectionThrottledFunction(e));
 
         this.selectize.on('change', this.onDeviceSelect.bind(this));
-
+        this.selectize.on('dropdown_close', () => {
+            // scroll back to the selection on the next open
+            const selection = this.selectize.getOption(this.selectedDevice);
+            this.selectize.setActiveOption(selection);
+        });
         this.eventHub.on('colours', this.onColours, this);
         this.eventHub.on('panesLinkLine', this.onPanesLinkLine, this);
         this.eventHub.emit('deviceViewOpened', this.compilerInfo.compilerId);
@@ -164,7 +229,7 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
         this.devices = devices;
 
         let deviceNames: string[] = [];
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
+
         if (!this.devices) {
             this.showDeviceAsmResults([{text: '<No output>'}]);
         } else {
@@ -182,8 +247,9 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
     override onCompileResult(id: number, compiler: CompilerInfo, result: CompilationResult): void {
         if (this.compilerInfo.compilerId !== id) return;
 
-        // @ts-expect-error: CompilationResult does not have the 'devices' type
-        this.onDevices(result.devices);
+        if (result.devices) {
+            this.onDevices(result.devices);
+        }
     }
 
     makeDeviceSelector(deviceNames: string[]): void {
@@ -235,7 +301,7 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
             const devOutput = this.devices[this.selectedDevice];
             const languageId = devOutput.languageId;
             if (devOutput.asm) {
-                this.showDeviceAsmResults(devOutput.asm, languageId);
+                this.showDeviceAsmResults(devOutput.asm as ResultLine[], languageId);
             } else {
                 this.showDeviceAsmResults(
                     [{text: `<Device ${this.selectedDevice} has errors>`}].concat(devOutput.stderr),
@@ -274,7 +340,7 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
 
     override onCompiler(
         id: number,
-        compiler: CompilerInfo | undefined,
+        compiler: CompilerInfo | null,
         options: string,
         editorId: number,
         treeId: number,
@@ -294,15 +360,19 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
         this.lastColours = colours;
         this.lastColourScheme = scheme;
 
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (id === this.compilerInfo.compilerId && this.deviceCode) {
-            const irColours = {};
+            const irColours: Record<number, number> = {};
             this.deviceCode.forEach((x: ResultLine, index: number) => {
-                if (x.source && x.source.file == null && x.source.line > 0 && colours[x.source.line - 1]) {
+                if (
+                    x.source &&
+                    (x.source.file == null || x.source.mainsource) &&
+                    x.source.line > 0 &&
+                    colours[x.source.line - 1]
+                ) {
                     irColours[index] = colours[x.source.line - 1];
                 }
             });
-            this.colours = colour.applyColours(this.editor, irColours, scheme, this.colours);
+            colour.applyColours(irColours, scheme, this.editorDecorations);
         }
     }
 
@@ -317,33 +387,89 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
         }
     }
 
-    onMouseMove(e: monaco.editor.IEditorMouseEvent): void {
-        if (e.target.position === null) return;
-        if (this.settings.hoverShowSource) {
-            this.clearLinkedLines();
-            const hoverCode = this.deviceCode[e.target.position.lineNumber - 1];
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-            if (hoverCode && this.compilerInfo.editorId != null) {
-                // We check that we actually have something to show at this point!
-                const sourceLine = hoverCode.source && !hoverCode.source.file ? hoverCode.source.line : -1;
-                this.eventHub.emit('editorLinkLine', this.compilerInfo.editorId, sourceLine, -1, 0, false);
-                this.eventHub.emit(
-                    'panesLinkLine',
-                    this.compilerInfo.compilerId,
-                    sourceLine,
-                    -1,
-                    0,
-                    false,
-                    this.getPaneName(),
-                );
+    async onMouseMove(e: any) {
+        if (e === null || e.target === null || e.target.position === null) return;
+        const currentWord = this.editor.getModel()?.getWordAtPosition(e.target.position);
+        if (currentWord?.word) {
+            let word = currentWord.word;
+            let startColumn = currentWord.startColumn;
+            // Avoid throwing an exception if somehow (How?) we have a non-existent lineNumber.
+            // c.f. https://sentry.io/matt-godbolt/compiler-explorer/issues/285270358/
+            if (e.target.position.lineNumber <= (this.editor.getModel()?.getLineCount() ?? 0)) {
+                // Hacky workaround to check for negative numbers.
+                // c.f. https://github.com/compiler-explorer/compiler-explorer/issues/434
+                const lineContent = this.editor.getModel()?.getLineContent(e.target.position.lineNumber);
+                if (lineContent && lineContent[currentWord.startColumn - 2] === '-') {
+                    word = '-' + word;
+                    startColumn -= 1;
+                }
+            }
+            const range = new monaco.Range(
+                e.target.position.lineNumber,
+                Math.max(startColumn, 1),
+                e.target.position.lineNumber,
+                currentWord.endColumn,
+            );
+            const numericToolTip = utils.getNumericToolTip(word);
+            if (numericToolTip) {
+                this.decorations.numericToolTip = [
+                    {
+                        range: range,
+                        options: {
+                            isWholeLine: false,
+                            hoverMessage: [
+                                {
+                                    // We use double `` as numericToolTip may include a single ` character.
+                                    value: '``' + numericToolTip + '``',
+                                },
+                            ],
+                        },
+                    },
+                ];
+                this.updateDecorations();
+            }
+            const hoverShowAsmDoc = this.settings.hoverShowAsmDoc;
+            if (hoverShowAsmDoc) {
+                try {
+                    const response = await Compiler.getAsmInfo(
+                        currentWord.word,
+                        this.selectedDevice.split(' ')[0].toLowerCase() as InstructionSet,
+                    );
+                    if (!response) return;
+                    this.decorations.asmToolTip = [
+                        {
+                            range: range,
+                            options: {
+                                isWholeLine: false,
+                                hoverMessage: [
+                                    {
+                                        value: response.tooltip + '\n\nMore information available in the context menu.',
+                                        isTrusted: true,
+                                    },
+                                ],
+                            },
+                        },
+                    ];
+                    this.updateDecorations();
+                } catch {
+                    // ignore errors fetching tooltips
+                }
             }
         }
+    }
+
+    getLineTokens(line: number): monaco.Token[] {
+        const model = this.editor.getModel();
+        if (!model || line > model.getLineCount()) return [];
+        const flavour = model.getLanguageId();
+        const tokens = monaco.editor.tokenize(model.getLineContent(line), flavour);
+        return tokens.length > 0 ? tokens[0] : [];
     }
 
     updateDecorations(): void {
         this.prevDecorations = this.editor.deltaDecorations(
             this.prevDecorations,
-            Object.values(this.decorations).flatMap(x => x),
+            Object.values(this.decorations).flat(),
         );
     }
 
@@ -360,11 +486,14 @@ export class DeviceAsm extends MonacoPane<monaco.editor.IStandaloneCodeEditor, D
         revealLine: boolean,
         sender: string,
     ): void {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         if (Number(compilerId) === this.compilerInfo.compilerId && this.deviceCode) {
             const lineNums: number[] = [];
             this.deviceCode.forEach((line: ResultLine, i: number) => {
-                if (line.source && line.source.file == null && line.source.line === lineNumber) {
+                if (
+                    line.source &&
+                    (line.source.file == null || line.source.mainsource) &&
+                    line.source.line === lineNumber
+                ) {
                     const line = i + 1;
                     lineNums.push(line);
                 }

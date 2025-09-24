@@ -22,17 +22,21 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import assert from 'assert';
+import assert from 'node:assert';
 
 import {DynamoDB} from '@aws-sdk/client-dynamodb';
+import * as express from 'express';
 import _ from 'underscore';
 
 import {unwrap} from '../assert.js';
+import {awsCredentials} from '../aws.js';
 import {logger} from '../logger.js';
+import {PropertyGetter} from '../properties.interfaces.js';
+import {CompilerProps} from '../properties.js';
 import {S3Bucket} from '../s3-handler.js';
 import {anonymizeIp} from '../utils.js';
 
-import {StorageBase} from './base.js';
+import {ExpandedShortLink, StorageBase, StoredObject} from './base.js';
 
 /*
  * NEVER CHANGE THIS VALUE
@@ -54,6 +58,11 @@ const MIN_STORED_ID_LENGTH = 9;
 
 assert(MIN_STORED_ID_LENGTH >= PREFIX_LENGTH, 'MIN_STORED_ID_LENGTH must be at least PREFIX_LENGTH');
 
+export type TestReq = {
+    get: () => string;
+    ip?: string;
+};
+
 export class StorageS3 extends StorageBase {
     static get key() {
         return 's3';
@@ -64,24 +73,24 @@ export class StorageS3 extends StorageBase {
     protected readonly s3: S3Bucket;
     protected readonly dynamoDb: DynamoDB;
 
-    constructor(httpRootDir, compilerProps, awsProps) {
+    constructor(httpRootDir: string, compilerProps: CompilerProps | PropertyGetter, awsProps: PropertyGetter) {
         super(httpRootDir, compilerProps);
-        const region = awsProps('region');
-        const bucket = awsProps('storageBucket');
-        this.prefix = awsProps('storagePrefix');
-        this.table = awsProps('storageDynamoTable');
+        const region = awsProps('region') as string;
+        const bucket = awsProps('storageBucket') as string;
+        this.prefix = awsProps('storagePrefix') as string;
+        this.table = awsProps('storageDynamoTable') as string;
         logger.info(
             `Using s3 storage solution on ${region}, bucket ${bucket}, ` +
                 `prefix ${this.prefix}, dynamo table ${this.table}`,
         );
         this.s3 = new S3Bucket(bucket, region);
-        this.dynamoDb = new DynamoDB({region: region});
+        this.dynamoDb = new DynamoDB({region: region, credentials: awsCredentials()});
     }
 
-    async storeItem(item, req) {
+    async storeItem(item: StoredObject, req: express.Request | TestReq) {
         logger.info(`Storing item ${item.prefix}`);
         const now = new Date();
-        let ip = req.get('X-Forwarded-For') || anonymizeIp(req.ip);
+        let ip = req.get('X-Forwarded-For') || anonymizeIp(req.ip!);
         const commaIndex = ip.indexOf(',');
         if (commaIndex > 0) {
             // Anonymize only client IP
@@ -103,7 +112,7 @@ export class StorageS3 extends StorageBase {
                         creation_date: {S: now.toISOString()},
                     },
                 }),
-                this.s3.put(item.fullHash, item.config, this.prefix, {}),
+                this.s3.put(item.fullHash, item.config as any as Buffer, this.prefix, {}),
             ]);
             return item;
         } catch (err) {
@@ -112,7 +121,7 @@ export class StorageS3 extends StorageBase {
         }
     }
 
-    async findUniqueSubhash(hash) {
+    async findUniqueSubhash(hash: string) {
         const prefix = hash.substring(0, PREFIX_LENGTH);
         const data = await this.dynamoDb.query({
             TableName: this.table,
@@ -133,31 +142,30 @@ export class StorageS3 extends StorageBase {
                     uniqueSubHash: subHash,
                     alreadyPresent: false,
                 };
-            } else {
-                const itemHash = fullHashes[index];
-                /* If the hashes coincide, it means this config has already been stored.
-                 * Else, keep looking
-                 */
-                if (itemHash === hash) {
-                    return {
-                        prefix: prefix,
-                        uniqueSubHash: subHash,
-                        alreadyPresent: true,
-                    };
-                }
+            }
+            const itemHash = fullHashes[index];
+            /* If the hashes coincide, it means this config has already been stored.
+             * Else, keep looking
+             */
+            if (itemHash === hash) {
+                return {
+                    prefix: prefix,
+                    uniqueSubHash: subHash,
+                    alreadyPresent: true,
+                };
             }
         }
         throw new Error(`Could not find unique subhash for hash "${hash}"`);
     }
 
-    getKeyStruct(id) {
+    getKeyStruct(id: string) {
         return {
             prefix: {S: id.substring(0, PREFIX_LENGTH)},
             unique_subhash: {S: id},
         };
     }
 
-    async expandId(id: string) {
+    async expandId(id: string): Promise<ExpandedShortLink> {
         // By just getting the item and not trying to update it, we save an update when the link does not exist
         // for which we have less resources allocated, but get one extra read (But we do have more reserved for it)
         const item = await this.dynamoDb.getItem({
@@ -169,14 +177,19 @@ export class StorageS3 extends StorageBase {
         const result = await this.s3.get(unwrap(attributes.full_hash.S), this.prefix);
         // If we're here, we are pretty confident there is a match. But never hurts to double check
         if (!result.hit) throw new Error(`ID ${id} not present in storage`);
-        const metadata = attributes.named_metadata ? attributes.named_metadata.M : null;
-        return {
+
+        const link: ExpandedShortLink = {
             config: unwrap(result.data).toString(),
-            specialMetadata: metadata,
         };
+
+        if (attributes.named_metadata) link.specialMetadata = attributes.named_metadata.M;
+
+        if (attributes.creation_date?.S) link.created = new Date(attributes.creation_date.S);
+
+        return link;
     }
 
-    async incrementViewCount(id) {
+    async incrementViewCount(id: string) {
         try {
             await this.dynamoDb.updateItem({
                 TableName: this.table,

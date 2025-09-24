@@ -23,17 +23,16 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 import $ from 'jquery';
-import {options} from './options.js';
-import * as colour from './colour.js';
-import * as local from './local.js';
-import {themes, Themes} from './themes.js';
-import {AppTheme, ColourScheme, ColourSchemeInfo} from './colour.js';
-import {Hub} from './hub.js';
-import {EventHub} from './event-hub.js';
-import {keys, isString} from '../lib/common-utils.js';
-import {assert, unwrapString} from './assert.js';
-
+import {isString, keys} from '../shared/common-utils.js';
 import {LanguageKey} from '../types/languages.interfaces.js';
+import {assert, unwrapString} from './assert.js';
+import * as colour from './colour.js';
+import {AppTheme, ColourScheme, ColourSchemeInfo} from './colour.js';
+import {EventHub} from './event-hub.js';
+import {Hub} from './hub.js';
+import {localStorage} from './local.js';
+import {options} from './options.js';
+import {Themes, themes} from './themes.js';
 
 export type FormatBase = 'Google' | 'LLVM' | 'Mozilla' | 'Chromium' | 'WebKit' | 'Microsoft' | 'GNU';
 
@@ -48,6 +47,7 @@ export interface SiteSettings {
     colourScheme: ColourScheme;
     compileOnChange: boolean;
     defaultLanguage?: LanguageKey;
+    autoDelayBeforeCompile: boolean;
     delayAfterChange: number;
     enableCodeLens: boolean;
     colouriseBrackets: boolean;
@@ -58,6 +58,7 @@ export interface SiteSettings {
     editorsFFont: string;
     editorsFLigatures: boolean;
     executorCompileOnChange: boolean;
+    shakeStatusIconOnWarnings: boolean;
     defaultFontScale?: number; // the font scale widget can check this setting before the default has been populated
     formatBase: FormatBase;
     formatOnCompile: boolean;
@@ -78,7 +79,10 @@ export interface SiteSettings {
 }
 
 class BaseSetting {
-    constructor(public elem: JQuery, public name: string) {}
+    constructor(
+        public elem: JQuery,
+        public name: string,
+    ) {}
 
     // Can be undefined if the element doesn't exist which is the case in embed mode
     protected val(): string | number | string[] | undefined {
@@ -120,9 +124,6 @@ class Select extends BaseSetting {
 }
 
 class NumericSelect extends Select {
-    constructor(elem: JQuery, name: string, populate: {label: string; desc: string}[]) {
-        super(elem, name, populate);
-    }
     override getUi(): number {
         return Number(this.val());
     }
@@ -133,11 +134,11 @@ interface SliderSettings {
     max: number;
     step: number;
     display: JQuery;
-    formatter: (number) => string;
+    formatter: (arg: number) => string;
 }
 
 class Slider extends BaseSetting {
-    private readonly formatter: (number) => string;
+    private readonly formatter: (arg: number) => string;
     private display: JQuery;
     private max: number;
     private min: number;
@@ -164,7 +165,7 @@ class Slider extends BaseSetting {
     }
 
     override getUi(): number {
-        return parseInt(this.val()?.toString() ?? '0');
+        return Number.parseInt(this.val()?.toString() ?? '0', 10);
     }
 
     private updateDisplay() {
@@ -188,7 +189,7 @@ class Numeric extends BaseSetting {
     }
 
     override getUi(): number {
-        return this.clampValue(parseInt(this.val()?.toString() ?? '0'));
+        return this.clampValue(Number.parseInt(this.val()?.toString() ?? '0', 10));
     }
 
     override putUi(value: number) {
@@ -203,6 +204,11 @@ class Numeric extends BaseSetting {
 export class Settings {
     private readonly settingsObjs: BaseSetting[];
     private eventHub: EventHub;
+
+    // The delay between a change and re-compilation is a substantial factor in site traffic load.
+    // We want to be able to control it centrally - but only for users that didn't explicitly set it.
+    // This is the place.
+    private defaultDelayAfterChange = 2000;
 
     constructor(
         hub: Hub,
@@ -221,12 +227,20 @@ export class Settings {
         this.addNumerics();
         this.addTextBoxes();
 
+        // The color scheme dropdown needs to be populated otherwise the .val won't stick and it'll default
+        this.fillColourSchemeSelector(this.root.find('.colourScheme'), this.settings.theme);
         this.setSettings(this.settings);
         this.handleThemes();
+
+        this.eventHub.on('settingsChange', this.onSettingsChange.bind(this));
     }
 
     public static getStoredSettings(): SiteSettings {
-        return JSON.parse(local.get('settings', '{}'));
+        return JSON.parse(localStorage.get('settings', '{}'));
+    }
+
+    public static setStoredSettings(newSettings: SiteSettings) {
+        localStorage.set('settings', JSON.stringify(newSettings));
     }
 
     public setSettings(newSettings: SiteSettings) {
@@ -243,6 +257,12 @@ export class Settings {
 
     private onSettingsChange(settings: SiteSettings) {
         this.settings = settings;
+        if (this.settings.autoDelayBeforeCompile) {
+            this.settings.delayAfterChange = this.defaultDelayAfterChange;
+        }
+        const delaySliderElement = this.root.find('.delay');
+        delaySliderElement.prop('disabled', this.settings.autoDelayBeforeCompile);
+
         for (const setting of this.settingsObjs) {
             setting.putUi(this.settings[setting.name]);
         }
@@ -267,12 +287,14 @@ export class Settings {
             ['.colourise', 'colouriseAsm', true],
             ['.colouriseBrackets', 'colouriseBrackets', true],
             ['.compileOnChange', 'compileOnChange', true],
+            ['.autoDelayBeforeCompile', 'autoDelayBeforeCompile', true],
             ['.editorsFLigatures', 'editorsFLigatures', false],
             ['.enableCodeLens', 'enableCodeLens', true],
             ['.enableCommunityAds', 'enableCommunityAds', true],
             ['.enableCtrlStree', 'enableCtrlStree', true],
             ['.enableSharingPopover', 'enableSharingPopover', true],
             ['.executorCompileOnChange', 'executorCompileOnChange', true],
+            ['.shakeStatusIconOnWarnings', 'shakeStatusIconOnWarnings', true],
             ['.formatOnCompile', 'formatOnCompile', false],
             ['.hoverShowAsmDoc', 'hoverShowAsmDoc', true],
             ['.hoverShowSource', 'hoverShowSource', true],
@@ -331,6 +353,7 @@ export class Settings {
         const defaultLanguageData = Object.keys(langs).map(lang => {
             return {label: langs[lang].id, desc: langs[lang].name};
         });
+        defaultLanguageData.sort((a, b) => a.desc.localeCompare(b.desc));
         addSelector('.defaultLanguage', 'defaultLanguage', defaultLanguageData, defLang as LanguageKey);
 
         if (this.subLangId) {
@@ -354,7 +377,7 @@ export class Settings {
         ).elem;
         defaultFontScaleSelector.on('change', e => {
             assert(e.target instanceof HTMLSelectElement);
-            this.eventHub.emit('broadcastFontScale', parseInt(e.target.value));
+            this.eventHub.emit('broadcastFontScale', Number.parseInt(e.target.value, 10));
         });
 
         const formats: FormatBase[] = ['Google', 'LLVM', 'Mozilla', 'Chromium', 'WebKit', 'Microsoft', 'GNU'];
@@ -374,9 +397,17 @@ export class Settings {
 
     private addSliders() {
         // Handle older settings
-        if (this.settings.delayAfterChange === 0) {
-            this.settings.delayAfterChange = 750;
-            this.settings.compileOnChange = false;
+        if (localStorage.get('checkedAutoDelay', 'false') === 'false') {
+            if (this.settings.delayAfterChange === 0 || this.settings.delayAfterChange === 750) {
+                // 750 was the default before we added the autoDelayBeforeCompile checkbox
+                // 0 was something much older. Check those values to handle older settings
+                this.settings.autoDelayBeforeCompile = true;
+            }
+            localStorage.set('checkedAutoDelay', 'true');
+        }
+
+        if (this.settings.autoDelayBeforeCompile) {
+            this.settings.delayAfterChange = this.defaultDelayAfterChange;
         }
 
         const delayAfterChangeSettings: SliderSettings = {
@@ -386,7 +417,10 @@ export class Settings {
             display: this.root.find('.delay-current-value'),
             formatter: x => (x / 1000.0).toFixed(2) + 's',
         };
-        this.add(new Slider(this.root.find('.delay'), 'delayAfterChange', delayAfterChangeSettings), 750);
+        this.add(
+            new Slider(this.root.find('.delay'), 'delayAfterChange', delayAfterChangeSettings),
+            this.settings.delayAfterChange,
+        );
     }
 
     private addNumerics() {
@@ -414,7 +448,7 @@ export class Settings {
         });
 
         const colourSchemeSelect = this.root.find('.colourScheme');
-        colourSchemeSelect.on('change', e => {
+        colourSchemeSelect.on('change', _e => {
             const currentTheme = this.settings.theme;
             $.data(themeSelect, 'theme-' + currentTheme, unwrapString<ColourScheme>(colourSchemeSelect.val()));
         });
@@ -428,17 +462,17 @@ export class Settings {
         this.onThemeChange();
     }
 
-    private fillColourSchemeSelector(colourSchemeSelect: JQuery, newTheme?: AppTheme) {
+    private fillColourSchemeSelector(colourSchemeSelect: JQuery, theme?: AppTheme) {
         colourSchemeSelect.empty();
-        if (newTheme === 'system') {
+        if (theme === 'system') {
             if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-                newTheme = themes.dark.id;
+                theme = themes.dark.id;
             } else {
-                newTheme = themes.default.id;
+                theme = themes.default.id;
             }
         }
         for (const scheme of colour.schemes) {
-            if (this.isSchemeUsable(scheme, newTheme)) {
+            if (this.isSchemeUsable(scheme, theme)) {
                 colourSchemeSelect.append($(`<option value="${scheme.name}">${scheme.desc}</option>`));
             }
         }
@@ -470,12 +504,10 @@ export class Settings {
 
         // Small check to make sure we aren't getting something completely unexpected, like a string[] or number
         assert(
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             isString(oldScheme) || oldScheme === undefined || oldScheme == null,
             'Unexpected value received from colourSchemeSelect.val()',
         );
         assert(
-            // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
             isString(newTheme) || newTheme === undefined || newTheme == null,
             'Unexpected value received from colourSchemeSelect.val()',
         );

@@ -22,29 +22,34 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+import {InstructionSet} from '../../../types/instructionsets.js';
+
 export enum InstructionType {
-    jmp,
-    conditionalJmpInst,
-    notRetInst,
-    retInst,
+    jmp = 0,
+    conditionalJmpInst = 1,
+    notRetInst = 2,
+    retInst = 3,
 }
 
 export class BaseInstructionSetInfo {
-    static get key() {
+    static get key(): 'base' | InstructionSet | InstructionSet[] {
         return 'base';
     }
 
     isJmpInstruction(x: string) {
-        return x.trim()[0] === 'j' || x.match(/\bb\.*(eq|ne|cs|hs|cc|lo|hi|ls|ge|lt|gt|le|rge|rlt)?\b/);
+        return (
+            x.trim()[0] === 'j' ||
+            /\bb\.*(eq|ne|cs|hs|cc|lo|hi|ls|ge|lt|gt|le|rge|rlt)?\b/.test(x) ||
+            /tbnz|tbz|cbnz|cbz/.test(x)
+        );
     }
 
     getInstructionType(inst: string) {
         if (inst.includes('jmp') || inst.includes(' b ')) return InstructionType.jmp;
-        else if (this.isJmpInstruction(inst)) return InstructionType.conditionalJmpInst;
-        else if (inst.includes(' ret')) {
+        if (this.isJmpInstruction(inst)) return InstructionType.conditionalJmpInst;
+        if (inst.includes(' ret')) {
             return InstructionType.retInst;
-        } else {
-            return InstructionType.notRetInst;
         }
+        return InstructionType.notRetInst;
     }
 }

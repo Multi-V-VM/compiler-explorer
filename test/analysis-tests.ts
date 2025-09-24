@@ -22,8 +22,13 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+import {beforeAll, describe, expect, it} from 'vitest';
+
 import {CompilationEnvironment} from '../lib/compilation-env.js';
 import {AnalysisTool, LLVMmcaTool} from '../lib/compilers/index.js';
+import {ToolEnv} from '../lib/tooling/base-tool.interface.js';
+import {LLVMMcaTool as LLVMMcaTooling} from '../lib/tooling/llvm-mca-tool.js';
+import {ToolInfo} from '../types/tool.interfaces.js';
 
 import {
     makeCompilationEnvironment,
@@ -40,12 +45,14 @@ describe('LLVM-mca tool definition', () => {
     let ce: CompilationEnvironment;
     let a: LLVMmcaTool;
 
-    before(() => {
+    beforeAll(() => {
         ce = makeCompilationEnvironment({languages});
         const info = makeFakeCompilerInfo({
             remote: {
                 target: 'foo',
                 path: 'bar',
+                cmakePath: 'cmake',
+                basePath: '/',
             },
             lang: languages.analysis.id,
         });
@@ -54,28 +61,22 @@ describe('LLVM-mca tool definition', () => {
 
     it('should have most filters disabled', () => {
         if (shouldExist(a)) {
-            a.getInfo().disabledFilters.should.be.deep.equal([
-                'labels',
-                'directives',
-                'commentOnly',
-                'trim',
-                'debugCalls',
-            ]);
+            expect(a.getInfo().disabledFilters).toEqual(['labels', 'directives', 'commentOnly', 'trim', 'debugCalls']);
         }
     });
 
     it('should default to most filters off', () => {
         const filters = a.getDefaultFilters();
-        filters.intel.should.equal(true);
-        filters.commentOnly.should.equal(false);
-        filters.directives.should.equal(false);
-        filters.labels.should.equal(false);
-        filters.optOutput.should.equal(false);
-        filters.debugCalls.should.equal(false);
+        expect(filters.intel).toBe(true);
+        expect(filters.commentOnly).toBe(false);
+        expect(filters.directives).toBe(false);
+        expect(filters.labels).toBe(false);
+        expect(filters.optOutput).toBe(false);
+        expect(filters.debugCalls).toBe(false);
     });
 
     it('should not support objdump', () => {
-        a.supportsObjdump().should.equal(false);
+        expect(a.supportsObjdump()).toBe(false);
     });
 
     it('should support "-o output-file" by default', () => {
@@ -86,7 +87,7 @@ describe('LLVM-mca tool definition', () => {
             }),
             'output.txt',
         );
-        opts.should.be.deep.equal(['-o', 'output.txt']);
+        expect(opts).toEqual(['-o', 'output.txt']);
     });
 
     it('should split if disabledFilters is a string', () => {
@@ -94,10 +95,26 @@ describe('LLVM-mca tool definition', () => {
             remote: {
                 target: 'foo',
                 path: 'bar',
+                cmakePath: 'cmake',
+                basePath: '/',
             },
             lang: 'analysis',
             disabledFilters: 'labels,directives,debugCalls' as any,
+            exe: 'clang',
         });
-        new AnalysisTool(info, ce).getInfo().disabledFilters.should.deep.equal(['labels', 'directives', 'debugCalls']);
+        expect(new AnalysisTool(info, ce).getInfo().disabledFilters).toEqual(['labels', 'directives', 'debugCalls']);
+    });
+
+    it('should remove .loc and .file directives from assembly', () => {
+        const mcaTool = new LLVMMcaTooling({} as ToolInfo, {} as ToolEnv);
+
+        const asmWithDebugInfo = '.file "test.c"\n.loc 1 1 12\nmovl $2, %eax\n.file 0 "/path" "test.c"\nret\n';
+        const result = mcaTool.rewriteAsm(asmWithDebugInfo);
+
+        // Verify that .loc and .file directives are removed
+        expect(result).not.toContain('.loc');
+        expect(result).not.toContain('.file');
+        expect(result).toContain('movl $2, %eax');
+        expect(result).toContain('ret');
     });
 });

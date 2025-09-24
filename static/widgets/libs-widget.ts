@@ -23,13 +23,17 @@
 // POSSIBILITY OF SUCH DAMAGE.
 
 import $ from 'jquery';
-import {options} from '../options.js';
-import * as local from '../local.js';
-import {Library, LibraryVersion} from '../options.interfaces.js';
-import {Lib, WidgetState} from './libs-widget.interfaces.js';
 import {unwrapString} from '../assert.js';
+import * as BootstrapUtils from '../bootstrap-utils.js';
+import {localStorage} from '../local.js';
+import {Library, LibraryVersion} from '../options.interfaces.js';
+import {options} from '../options.js';
+import {SentryCapture} from '../sentry.js';
+import {Alert} from './alert.js';
+import {Lib, WidgetState} from './libs-widget.interfaces.js';
 
 const FAV_LIBS_STORE_KEY = 'favlibs';
+const c_default_compiler_non_id = '_default_';
 
 export type CompilerLibs = Record<string, Library>;
 type LangLibs = Record<string, CompilerLibs>;
@@ -37,6 +41,94 @@ type AvailableLibs = Record<string, LangLibs>;
 type LibInUse = {libId: string; versionId: string} & LibraryVersion;
 
 type FavLibraries = Record<string, string[]>;
+
+type PopupAlertFilter = (compiler: string, langId: string) => {title: string; content: string} | null;
+
+type LibraryAnnotation = {
+    commithash?: string;
+    cxx11?: boolean;
+    machine?: string;
+    osabi?: string;
+    error?: string;
+};
+
+type LibraryBuildInfo = {
+    arch?: string;
+    compilerId?: string;
+    compilerType?: string;
+    libcxx?: string;
+    os?: string;
+    error?: string;
+};
+
+type LibraryAnnotationDetail = {
+    buildhash: string;
+    annotation: LibraryAnnotation;
+    buildinfo: LibraryBuildInfo;
+};
+
+class LibraryAnnotations {
+    private all: Record<string, LibraryAnnotationDetail[]> = {};
+
+    private async get(library: string, version: string): Promise<LibraryAnnotationDetail[]> {
+        const libver = `${library}/${version}`;
+        if (!Object.keys(this.all).includes(libver)) {
+            const response = await fetch(`https://conan.compiler-explorer.com/annotations/${libver}`);
+            this.all[libver] = (await response.json()) as LibraryAnnotationDetail[];
+        }
+        return this.all[libver];
+    }
+
+    async getForCompiler(library: string, version: string, compilerId: string): Promise<LibraryAnnotationDetail[]> {
+        const result: LibraryAnnotationDetail[] = [];
+
+        try {
+            const details = await this.get(library, version);
+            for (const detail of details) {
+                if (detail.buildinfo.compilerId === compilerId) {
+                    result.push(detail);
+                } else if (detail.buildinfo.compilerId === 'cshared') {
+                    result.push(detail);
+                }
+            }
+        } catch (e) {
+            SentryCapture(e, `getForCompiler(${library}, ${version}, ${compilerId})`);
+        }
+
+        return result;
+    }
+}
+
+function getCompilerName(compilerId: string): string {
+    if (compilerId === c_default_compiler_non_id) {
+        return 'compiler';
+    }
+
+    const compilerName = '';
+    for (const compiler of options.compilers) {
+        if (compiler.id === compilerId) {
+            return compiler.name;
+        }
+    }
+
+    return compilerName;
+}
+
+function shortenMachineName(name: string): string {
+    if (name === 'Advanced Micro Devices X86-64') {
+        return 'amd64';
+    }
+    if (name === 'Intel 80386') {
+        return '386';
+    }
+    if (name === '') {
+        return 'default target';
+    }
+
+    return name;
+}
+
+const lib_annotations = new LibraryAnnotations();
 
 export class LibsWidget {
     private domRoot: JQuery;
@@ -50,6 +142,21 @@ export class LibsWidget {
     private readonly onChangeCallback: () => void;
 
     private readonly availableLibs: AvailableLibs;
+    private readonly filters: PopupAlertFilter[] = [
+        (compilerId, langId) => {
+            if (langId === 'rust' && ['beta', 'nightly'].includes(compilerId)) {
+                return {
+                    title: 'Missing library support for rustc nightly/beta',
+                    content:
+                        'Compiler Explorer does not yet support libraries for the rustc nightly/beta compilers.' +
+                        'For library support, please use the stable compiler. Please see tracking issue' +
+                        '<a href="https://github.com/compiler-explorer/compiler-explorer/issues/3766">' +
+                        'compiler-explorer/compiler-explorer#3766</a> for more information.',
+                };
+            }
+            return null;
+        },
+    ];
 
     constructor(
         langId: string,
@@ -63,14 +170,14 @@ export class LibsWidget {
         if (compiler) {
             this.currentCompilerId = compiler.id;
         } else {
-            this.currentCompilerId = '_default_';
+            this.currentCompilerId = c_default_compiler_non_id;
         }
         this.currentLangId = langId;
         this.domRoot = $('#library-selection').clone(true);
         this.initButtons();
         this.onChangeCallback = onChangeCallback;
         this.availableLibs = {};
-        this.updateAvailableLibs(possibleLibs);
+        this.updateAvailableLibs(possibleLibs, true);
         this.loadState(state);
 
         this.fullRefresh();
@@ -81,8 +188,24 @@ export class LibsWidget {
             this.domRoot.addClass('mobile');
         }
 
-        this.domRoot.on('shown.bs.modal', () => {
+        BootstrapUtils.setElementEventHandler(this.domRoot, 'shown.bs.modal', () => {
             searchInput.trigger('focus');
+
+            for (const filter of this.filters) {
+                const filterResult = filter(this.currentCompilerId, this.currentLangId);
+                if (filterResult !== null) {
+                    const alertSystem = new Alert();
+                    alertSystem.notify(`${filterResult.title}: ${filterResult.content}`, {
+                        group: 'libs',
+                        alertClass: 'notification-error',
+                    });
+                    break;
+                }
+            }
+        });
+
+        BootstrapUtils.setElementEventHandler(this.domRoot, 'hide.bs.modal', () => {
+            this.hidePopups();
         });
 
         searchInput.on('input', this.startSearching.bind(this));
@@ -90,7 +213,7 @@ export class LibsWidget {
         this.domRoot.find('.lib-search-button').on('click', this.startSearching.bind(this));
 
         this.dropdownButton.on('click', () => {
-            this.domRoot.modal({});
+            BootstrapUtils.showModal(this.domRoot);
         });
 
         this.updateButton();
@@ -102,6 +225,14 @@ export class LibsWidget {
     }
 
     loadState(state: WidgetState) {
+        // If state exists, clear previously selected libraries.
+        if (state.libs !== undefined) {
+            const libsInUse = this.listUsedLibs();
+            for (const libId in libsInUse) {
+                this.markLibrary(libId, libsInUse[libId], false);
+            }
+        }
+
         for (const lib of state.libs ?? []) {
             if (lib.name && lib.ver) {
                 this.markLibrary(lib.name, lib.ver, true);
@@ -138,11 +269,11 @@ export class LibsWidget {
     }
 
     getFavorites(): FavLibraries {
-        return JSON.parse(local.get(FAV_LIBS_STORE_KEY, '{}'));
+        return JSON.parse(localStorage.get(FAV_LIBS_STORE_KEY, '{}'));
     }
 
     setFavorites(faves: FavLibraries) {
-        local.set(FAV_LIBS_STORE_KEY, JSON.stringify(faves));
+        localStorage.set(FAV_LIBS_STORE_KEY, JSON.stringify(faves));
     }
 
     isAFavorite(libId: string, versionId: string): boolean {
@@ -175,10 +306,10 @@ export class LibsWidget {
         this.setFavorites(faves);
     }
 
-    newFavoriteLibDiv(libId: string, versionId: string, lib: Library, version: LibraryVersion): JQuery<Node> {
+    newFavoriteLibDiv(libId: string, versionId: string, lib: Library, version: LibraryVersion): JQuery<HTMLElement> {
         const template = $('#lib-favorite-tpl');
 
-        const libDiv = $(template.children()[0].cloneNode(true));
+        const libDiv = $(template.children().eq(0).clone());
 
         const quickSelectButton = libDiv.find('.lib-name-and-version');
         quickSelectButton.html(lib.name + ' ' + version.version);
@@ -203,7 +334,7 @@ export class LibsWidget {
                 if (lib) {
                     if (versionId in lib.versions) {
                         const version = lib.versions[versionId];
-                        const div: any = this.newFavoriteLibDiv(libId, versionId, lib, version);
+                        const div = this.newFavoriteLibDiv(libId, versionId, lib, version);
                         favoritesDiv.append(div);
                     }
                 }
@@ -211,14 +342,22 @@ export class LibsWidget {
         }
     }
 
+    hidePopups() {
+        this.searchResults.find('.lib-info-button').each((_, el) => BootstrapUtils.hidePopover($(el)));
+    }
+
     clearSearchResults() {
+        this.searchResults.find('.lib-info-button').each((_, el) => {
+            const popover = BootstrapUtils.getPopoverInstance($(el));
+            if (popover) popover.dispose();
+        });
         this.searchResults.html('');
     }
 
-    newSelectedLibDiv(libId: string, versionId: string, lib: Library, version: LibraryVersion): JQuery<Node> {
+    newSelectedLibDiv(libId: string, versionId: string, lib: Library, version: LibraryVersion): JQuery<HTMLElement> {
         const template = $('#lib-selected-tpl');
 
-        const libDiv = $(template.children()[0].cloneNode(true));
+        const libDiv = $(template.children().eq(0).clone());
 
         const detailsButton = libDiv.find('.lib-name-and-version');
         detailsButton.html(lib.name + ' ' + version.version);
@@ -240,7 +379,7 @@ export class LibsWidget {
         return libDiv;
     }
 
-    conjureUpExamples(result: JQuery<Node>, lib: Library) {
+    conjureUpExamples(result: JQuery<HTMLElement>, lib: Library) {
         const examples = result.find('.lib-examples');
         if (lib.examples && lib.examples.length > 0) {
             examples.append($('<b>Examples</b>'));
@@ -258,10 +397,48 @@ export class LibsWidget {
         }
     }
 
-    newSearchResult(libId: string, lib: Library): JQuery<Node> {
+    async getBuildInfoAsHtml(libId: string, semver: string, url?: string): Promise<string> {
+        const details = await lib_annotations.getForCompiler(libId, semver, this.currentCompilerId);
+
+        let libInfoText = '';
+        for (const info of details) {
+            if (info.annotation.commithash) {
+                const machineName = shortenMachineName(info.annotation.machine || '');
+                const stdlib = info.buildinfo.libcxx;
+                if (url?.startsWith('https://github.com/')) {
+                    // this is a bit of a hack because we don't store the git repo in our properties files
+                    libInfoText +=
+                        `<li>Binary for ${machineName} (${stdlib}) based on commit: ` +
+                        `<a href="${url}/commit/${info.annotation.commithash}" target="_blank">` +
+                        info.annotation.commithash +
+                        '</a></li>';
+                } else {
+                    libInfoText +=
+                        `<li>Binary for ${machineName} (${stdlib}) based on commit: ` +
+                        info.annotation.commithash +
+                        '</li>';
+                }
+            }
+        }
+
+        if (!libInfoText) {
+            libInfoText = 'No binaries available';
+        } else {
+            libInfoText = '<ul>' + libInfoText + '</ul>';
+        }
+
+        return libInfoText;
+    }
+
+    async loadBuildInfoIntoPopup(popupId: string, libId: string, semver: string, url?: string) {
+        const libInfoText = await this.getBuildInfoAsHtml(libId, semver, url);
+        $('#' + popupId).html(libInfoText);
+    }
+
+    newSearchResult(libId: string, lib: Library): JQuery<HTMLElement> {
         const template = $('#lib-search-result-tpl');
 
-        const result = $($(template.children()[0].cloneNode(true)));
+        const result = $(template.children().eq(0).clone());
         result.find('.lib-name').html(lib.name || libId);
         if (!lib.description) {
             result.find('.lib-description').hide();
@@ -274,7 +451,9 @@ export class LibsWidget {
 
         const faveButton = result.find('.lib-fav-button');
         const faveStar = faveButton.find('.lib-fav-btn-icon');
+        const infoButton = result.find('.lib-info-button');
         faveButton.hide();
+        infoButton.hide();
 
         const versions = result.find('.lib-version-select');
         versions.html('');
@@ -299,9 +478,14 @@ export class LibsWidget {
                 }
 
                 faveButton.show();
+                infoButton.show();
             }
             option.attr('value', versionId);
             option.html(version.version || versionId);
+
+            option.data('lookupname', version.lookupname || libId);
+            option.data('lookupversion', version.lookupversion || version.version || versionId);
+
             if (version.used || !version.hidden) {
                 hasVisibleVersions = true;
                 versions.append(option);
@@ -312,6 +496,31 @@ export class LibsWidget {
             noVersionSelectedOption.text('No available versions');
             versions.prop('disabled', true);
         }
+
+        const popoverTemplate =
+            '<div class="popover" role="tooltip">' +
+            '<div class="arrow"></div>' +
+            '<h3 class="popover-header"></h3><div class="popover-body"></div>' +
+            '</div>';
+        BootstrapUtils.initPopover(infoButton, {
+            html: true,
+            title: 'Build info for ' + getCompilerName(this.currentCompilerId),
+            content: () => {
+                const nowts = Math.round(Date.now() / 1000);
+                const popupId = `build-info-content-${nowts}`;
+                const option = versions.find('option:selected');
+                const semver = option.html();
+                const lookupname = option.data('lookupname');
+                const lookupversion = option.data('lookupversion');
+                if (semver !== '-') {
+                    this.loadBuildInfoIntoPopup(popupId, lookupname, lookupversion, lib.url);
+                    return `<div id="${popupId}">Loading...</div>`;
+                }
+                return `<div id="${popupId}">No version selected</div>`;
+            },
+            template: popoverTemplate,
+            customClass: 'library-info-popover',
+        });
 
         faveButton.on('click', () => {
             const option = versions.find('option:selected');
@@ -342,8 +551,10 @@ export class LibsWidget {
             // Is this the "No selection" option?
             if (verId.length > 0) {
                 faveButton.show();
+                infoButton.show();
             } else {
                 faveButton.hide();
+                infoButton.hide();
             }
 
             this.onChange();
@@ -353,17 +564,13 @@ export class LibsWidget {
     }
 
     addSearchResult(libId: string, library: Library) {
-        // FIXME: Type mismatch.
-        // The any here stops TS from complaining
-        const result: any = this.newSearchResult(libId, library);
+        const result = this.newSearchResult(libId, library);
         this.searchResults.append(result);
     }
 
     static _libVersionMatchesQuery(library: Library, searchText: string): boolean {
         const text = searchText.toLowerCase();
-        return (
-            library.name?.toLowerCase()?.includes(text) || library.description?.toLowerCase()?.includes(text) || false
-        );
+        return library.name?.toLowerCase().includes(text) || library.description?.toLowerCase().includes(text) || false;
     }
 
     startSearching() {
@@ -373,7 +580,7 @@ export class LibsWidget {
 
         const currentAvailableLibs = this.availableLibs[this.currentLangId][this.currentCompilerId];
         if (Object.keys(currentAvailableLibs).length === 0) {
-            const nolibsMessage: any = $($('#libs-dropdown').children()[0].cloneNode(true));
+            const nolibsMessage = $('#libs-dropdown').children().eq(0).clone();
             this.searchResults.append(nolibsMessage);
             return;
         }
@@ -400,7 +607,7 @@ export class LibsWidget {
             const lib = this.availableLibs[this.currentLangId][this.currentCompilerId][libId];
             const version = lib.versions[versionId];
 
-            const libDiv: any = this.newSelectedLibDiv(libId, versionId, lib, version);
+            const libDiv = this.newSelectedLibDiv(libId, versionId, lib, version);
             items.append(libDiv);
         }
     }
@@ -410,7 +617,7 @@ export class LibsWidget {
 
         const currentAvailableLibs = this.availableLibs[this.currentLangId][this.currentCompilerId];
         if (Object.keys(currentAvailableLibs).length === 0) {
-            const nolibsMessage: any = $($('#libs-dropdown').children()[0].cloneNode(true));
+            const nolibsMessage = $('#libs-dropdown').children().eq(0).clone();
             this.searchResults.append(nolibsMessage);
             return;
         }
@@ -420,7 +627,7 @@ export class LibsWidget {
 
             if ('autodetect' in library.versions) continue;
 
-            const card: any = this.newSearchResult(libId, library);
+            const card = this.newSearchResult(libId, library);
             this.searchResults.append(card);
         }
     }
@@ -438,7 +645,7 @@ export class LibsWidget {
         }
     }
 
-    updateAvailableLibs(possibleLibs: CompilerLibs) {
+    updateAvailableLibs(possibleLibs: CompilerLibs, isLangChanged: boolean) {
         if (!(this.currentLangId in this.availableLibs)) {
             this.availableLibs[this.currentLangId] = {};
         }
@@ -455,11 +662,15 @@ export class LibsWidget {
             }
         }
 
-        this.initLangDefaultLibs();
+        if (isLangChanged) {
+            this.initLangDefaultLibs();
+        }
     }
 
     setNewLangId(langId: string, compilerId: string, possibleLibs: CompilerLibs) {
         const libsInUse = this.listUsedLibs();
+
+        const isLangChanged = this.currentLangId !== langId;
 
         this.currentLangId = langId;
 
@@ -470,7 +681,7 @@ export class LibsWidget {
         }
 
         // Clear the dom Root so it gets rebuilt with the new language libraries
-        this.updateAvailableLibs(possibleLibs);
+        this.updateAvailableLibs(possibleLibs, isLangChanged);
 
         for (const libId in libsInUse) {
             this.markLibrary(libId, libsInUse[libId], true);
@@ -486,16 +697,15 @@ export class LibsWidget {
         // If it's already a key, return it directly
         if (versionId in lib.versions) {
             return versionId;
-        } else {
-            // Else, look in each version and see if it has the id as an alias
-            for (const verId in lib.versions) {
-                const version = lib.versions[verId];
-                if (version.alias.includes(versionId)) {
-                    return verId;
-                }
-            }
-            return null;
         }
+        // Else, look in each version and see if it has the id as an alias
+        for (const verId in lib.versions) {
+            const version = lib.versions[verId];
+            if (version.alias.includes(versionId)) {
+                return verId;
+            }
+        }
+        return null;
     }
 
     getLibInfoById(libId: string): Library | undefined {
@@ -505,9 +715,8 @@ export class LibsWidget {
             libId in this.availableLibs[this.currentLangId][this.currentCompilerId]
         ) {
             return this.availableLibs[this.currentLangId][this.currentCompilerId][libId];
-        } else {
-            return undefined;
         }
+        return undefined;
     }
 
     markLibrary(name: string, versionId: string, used: boolean) {
@@ -523,10 +732,11 @@ export class LibsWidget {
     selectLibAndVersion(libId: string, versionId: string) {
         const actualId = this.getVersionOrAlias(libId, versionId);
         const libInfo = this.getLibInfoById(libId);
-        for (const v in libInfo?.versions) {
-            // @ts-ignore Sadly the TS type checker is not capable of inferring this can't be null
-            const version = libInfo.versions[v];
-            version.used = v === actualId;
+        if (libInfo) {
+            for (const v in libInfo.versions) {
+                const version = libInfo.versions[v];
+                version.used = v === actualId;
+            }
         }
     }
 

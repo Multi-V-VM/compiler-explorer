@@ -8,16 +8,13 @@ and then how to submit PRs to get it into the main CE site.
 Compiler configuration is done through the `etc/config/c++.*.properties` files (for C++, other languages follow the
 obvious pattern, replace as needed for your case).
 
-The various named configuration files are used in different contexts: for example `etc/config/c++.local.properties` take
-priority over `etc/config/c++.defaults.properties`. The `local` version is ignored by git, so you can make your own
-personalised changes there. The live site uses the `etc/config/c++.amazon.properties` file.
+For a comprehensive overview of the configuration system, including file hierarchy, property types, and group inheritance,
+refer to [Configuration.md](Configuration.md).
 
-Within the file, configuration is a set of key and value pairs, separated by an `=`. Whitespace is _not_ trimmed. Lines
-starting with `#` are considered comments and not parsed. The list of compilers is set by the `compilers` key and is a
-list of compiler identifiers or groups, separated by colons. Group names have an `&` prepended. As a nod to backwards
-compatibility with very old configurations, a path to a compiler can also be put in the list, but that doesn't let you
-configure many aspects of the compiler, nor does it allow paths with colons in them (since these are used as
-separators). The identifier itself is not important, but must be unique to that compiler.
+Below are compiler-specific configuration details:
+
+The list of compilers is set by the `compilers` key and is a list of compiler identifiers or groups, separated by colons. 
+Group names have an `&` prepended. The identifier itself is not important, but must be unique to that compiler.
 
 An example configuration:
 
@@ -55,58 +52,36 @@ compiler.clang5.name=Clang 5
 compiler.clang5.exe=/usr/bin/clang5
 ```
 
-Note about configuration files hierarchy:
-
-As mentioned previously, the live site uses `etc/config/c++.amazon.properties` to load its configuration from, but for
-properties not defined in the `amazon` file, the values present in `etc/config/c++.defaults.properties` will be used.
-
-By design, this does not however work for groups (Nor any other nested property). That is, if in
-`etc/config/c++.defaults.properties` you define the `intelAsm` property as:
-
-```INI
-versionFlag=--version
-compilers=&clang
-group.clang.intelAsm=-mllvm -x86-asm-syntax=intel
-group.clang.groupName=Clang
-...
-```
-
-but `etc/config/c++.amazon.properties` only has:
-
-```INI
-compilers=&clang
-group.clang.groupName=Clang
-...
-```
-
-once the site runs on the Amazon environment, the `&clang` group **will not** have the `intelAsm` property set, but
-`versionFlag` will.
+Note about group properties: Properties defined for a group in one configuration file (e.g., `defaults`) will not be carried 
+forward if that group is redefined in a higher-priority configuration file (e.g., `amazon`) without that property.
 
 ### Configuration keys
 
-| Key Name             | Type       | Description                                                                                                      |
-| -------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------- |
-| name                 | String     | Human readable name of the compiler                                                                              |
-| exe                  | Path       | Path to the executable                                                                                           |
-| alias                | Identifier | Another identifier for this compiler (mostly deprecated, used for backwards compatibility with very old CE URLs) |
-| options              | String     | Additional compiler options passed to the compiler when running it                                               |
-| intelAsm             | String     | Flags used to select intel assembly format (if not detected automatically)                                       |
-| needsMulti           | Boolean    | Whether the compiler needs multi arch support (defaults to yes if the host has multiarch enabled)                |
-| supportsBinary       | Boolean    | Whether this compiler supports linking to binary (e.g. compile, assemble and link to final executable program)   |
-| supportsBinaryObject | Boolean    | Whether this compiler supports compiling to binary object (e.g. compile and assemble to binary object)           |
-| supportsExecute      | Boolean    | Whether binary output from this compiler can be executed                                                         |
-| versionFlag          | String     | The flag to pass to the compiler to make it emit its version                                                     |
-| versionRe            | RegExp     | A regular expression used to capture the version from the version output                                         |
-| compilerType         | String     | The name of the class handling this compiler                                                                     |
-| interpreted          | Boolean    | Whether this is an interpreted language, and so the "compiler" is really an interpreter                          |
-| executionWrapper     | Path       | Path to script that can execute the compiler's output (e.g. could run under `qemu` or `mpi_run` or similar)      |
-| executionWrapperArgs | String     | List of arguments passed to the execution wrapper (separated by `\|` character)                                  |
-| demangler            | String     | Path to the demangler tool                                                                                       |
-| demanglerArgs        | String     | List of arguments passed to the demangler binary (separated by `\|` character)                                   |
-| objdumper            | String     | Path to the object dump tool                                                                                     |
-| objdumperArgs        | String     | List of arguments passed to the object dump tool (separated by `\|` character)                                   |
+| Key Name             | Type       | Description                                                                                                                                                        |
+| -------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| name                 | String     | Human readable name of the compiler                                                                                                                                |
+| exe                  | Path       | Path to the executable                                                                                                                                             |
+| alias                | Identifier | Another identifier for this compiler (mostly deprecated, used for backwards compatibility with very old CE URLs)                                                   |
+| options              | String     | Additional compiler options passed to the compiler when running it                                                                                                 |
+| intelAsm             | String     | Flags used to select intel assembly format (if not detected automatically)                                                                                         |
+| needsMulti           | Boolean    | Whether the compiler needs multi arch support (defaults to yes if the host has multiarch enabled)                                                                  |
+| supportsBinary       | Boolean    | Whether this compiler supports linking to binary (e.g. compile, assemble and link to final executable program)                                                     |
+| supportsBinaryObject | Boolean    | Whether this compiler supports compiling to binary object (e.g. compile and assemble to binary object)                                                             |
+| supportsExecute      | Boolean    | Whether binary output from this compiler can be executed                                                                                                           |
+| versionFlag          | String     | The flag to pass to the compiler to make it emit its version                                                                                                       |
+| versionRe            | RegExp     | A regular expression used to capture the version from the version output                                                                                           |
+| compilerType         | String     | The name of the class handling this compiler                                                                                                                       |
+| interpreted          | Boolean    | Whether this is an interpreted language, and so the "compiler" is really an interpreter                                                                            |
+| emulated             | Boolean    | Whether the compiler's output is run via an emulator (specified by `executionWrapper`) rather than natively                                                        |
+| executionWrapper     | Path       | Path to script that can execute the compiler's output (e.g. could run under `qemu` or `mpi_run` or similar)                                                        |
+| executionWrapperArgs | String     | List of arguments passed to the execution wrapper (separated by `\|` character)                                                                                    |
+| demangler            | String     | Path to the demangler tool                                                                                                                                         |
+| demanglerArgs        | String     | List of arguments passed to the demangler binary (separated by `\|` character)                                                                                     |
+| objdumper            | String     | Path to the object dump tool                                                                                                                                       |
+| objdumperArgs        | String     | List of arguments passed to the object dump tool (separated by `\|` character)                                                                                     |
+| instructionSet       | String     | The default set for the compiler, it will fall into that group of compilers (so you can filter by it) and get different instruction set documentation if available |
 
-The `compilerType` option is special: it refers to the Javascript class in `lib/compilers/*.js` which handles running
+The `compilerType` option is special: it refers to the Javascript class in `lib/compilers/*.ts` which handles running
 and handling output for this compiler type.
 
 ## Adding a new compiler locally

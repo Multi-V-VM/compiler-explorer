@@ -24,7 +24,9 @@
 
 export interface CfgState {
     selectedFunction: string | null;
-    zoom: number;
+    isircfg?: boolean;
+    centerparents?: boolean;
+    narrowtreelayout?: boolean;
 }
 
 /*

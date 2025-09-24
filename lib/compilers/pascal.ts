@@ -22,20 +22,24 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import path from 'path';
-
-import fs from 'fs-extra';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import _ from 'underscore';
 
-import type {ExecutionOptions} from '../../types/compilation/compilation.interfaces.js';
+import type {
+    CacheKey,
+    CompilationCacheKey,
+    ExecutionOptionsWithEnv,
+} from '../../types/compilation/compilation.interfaces.js';
 import type {PreliminaryCompilerInfo} from '../../types/compiler.interfaces.js';
 import type {ParseFiltersAndOutputOptions} from '../../types/features/filters.interfaces.js';
 import {unwrap} from '../assert.js';
 import {BaseCompiler} from '../base-compiler.js';
+import {CompilationEnvironment} from '../compilation-env.js';
 import * as utils from '../utils.js';
 
 import {PascalParser} from './argument-parsers.js';
-import {PascalUtils} from './pascal-utils.js';
+import * as pascalUtils from './pascal-utils.js';
 
 export class FPCCompiler extends BaseCompiler {
     static get key() {
@@ -45,27 +49,36 @@ export class FPCCompiler extends BaseCompiler {
     dprFilename: string;
     supportsOptOutput: boolean;
     nasmPath: string;
-    pasUtils: PascalUtils;
     demangler: any | null = null;
 
-    constructor(info: PreliminaryCompilerInfo, env) {
+    constructor(info: PreliminaryCompilerInfo, env: CompilationEnvironment) {
         super(info, env);
 
         this.compileFilename = 'output.pas';
         this.dprFilename = 'prog.dpr';
         this.supportsOptOutput = false;
         this.nasmPath = this.compilerProps<string>('nasmpath');
-        this.pasUtils = new PascalUtils();
     }
 
     override getSharedLibraryPathsAsArguments() {
         return [];
     }
 
-    override processAsm(result, filters) {
+    override async processAsm(result, filters: ParseFiltersAndOutputOptions) {
         // TODO: Pascal doesn't have a demangler exe, it's the only compiler that's weird like this
         this.demangler = new (unwrap(this.demanglerClass))(null as any, this);
         return this.asm.process(result.asm, filters);
+    }
+
+    override async postProcess(result, outputFilename: string, filters: ParseFiltersAndOutputOptions) {
+        const userSourceFilename = result.inputFilename;
+        const pasFilepath = path.join(result.dirPath, userSourceFilename);
+        const asmDumpFilepath = pasFilepath.substring(0, pasFilepath.length - 3) + 's';
+        return super.postProcess(result, asmDumpFilepath, filters);
+    }
+
+    isTheSameFileProbably(originalName: string, compareTo: string): boolean {
+        return originalName === compareTo || `/${originalName}` === compareTo;
     }
 
     override postProcessAsm(result, filters?: ParseFiltersAndOutputOptions) {
@@ -77,8 +90,16 @@ export class FPCCompiler extends BaseCompiler {
             }
         }
 
-        for (let j = 0; j < result.asm.length; ++j)
+        for (let j = 0; j < result.asm.length; ++j) {
             result.asm[j].text = this.demangler.demangleIfNeeded(result.asm[j].text);
+            if (
+                result.asm[j].source?.file &&
+                !result.asm[j].source.mainsource &&
+                this.isTheSameFileProbably(result.inputFilename, result.asm[j].source.file)
+            ) {
+                result.asm[j].source.mainsource = true;
+            }
+        }
 
         return result;
     }
@@ -90,7 +111,7 @@ export class FPCCompiler extends BaseCompiler {
             options = options.concat(this.compiler.intelAsm.split(' '));
         }
 
-        filters.preProcessLines = _.bind(this.preProcessLines, this);
+        filters.preProcessLines = this.preProcessLines.bind(this);
 
         if (filters.binary) {
             filters.dontMaskFilenames = true;
@@ -99,26 +120,48 @@ export class FPCCompiler extends BaseCompiler {
         return options;
     }
 
-    override getOutputFilename(dirPath: string) {
-        return path.join(dirPath, `${path.basename(this.compileFilename, this.lang.extensions[0])}.s`);
+    override getOutputFilename(dirPath: string, outputFilebase: string, key?: any): string {
+        let baseFilename: string = outputFilebase;
+        if (key?.source) {
+            const inputFilename = this.getMainSourceFilename(key.source);
+            baseFilename = inputFilename.substring(0, inputFilename.length - 4);
+        }
+
+        return path.join(dirPath, `${baseFilename}.s`);
     }
 
-    override getExecutableFilename(dirPath: string) {
+    override getExecutableFilename(dirPath: string, outputFilebase: string, key?: CacheKey | CompilationCacheKey) {
+        const source = (key && (key as CacheKey).source) || '';
+        if (key && pascalUtils.isProgram(source)) {
+            return path.join(dirPath, pascalUtils.getProgName(source));
+        }
+
         return path.join(dirPath, 'prog');
     }
 
     override async objdump(
-        outputFilename,
+        outputFilename: string,
         result: any,
         maxSize: number,
-        intelAsm,
-        demangle,
+        intelAsm: boolean,
+        demangle: boolean,
         staticReloc: boolean,
         dynamicReloc: boolean,
         filters: ParseFiltersAndOutputOptions,
     ) {
         const dirPath = path.dirname(outputFilename);
-        const execBinary = this.getExecutableFilename(dirPath);
+
+        let execBinary = '';
+
+        const inputExt = path.extname(result.inputFilename);
+        if (inputExt.toLowerCase() === '.dpr') {
+            execBinary = path.join(dirPath, path.basename(result.inputFilename, inputExt));
+        } else if (result.executableFilename) {
+            execBinary = unwrap<string>(result.executableFilename);
+        } else {
+            execBinary = this.getExecutableFilename(dirPath, path.basename(result.inputFilename, inputExt));
+        }
+
         if (await utils.fileExists(execBinary)) {
             return super.objdump(execBinary, result, maxSize, intelAsm, demangle, staticReloc, dynamicReloc, filters);
         }
@@ -127,47 +170,68 @@ export class FPCCompiler extends BaseCompiler {
     }
 
     static preProcessBinaryAsm(input: string) {
-        const systemInitOffset = input.indexOf('<SYSTEM_$$_init$>');
-        const relevantAsmStartsAt = input.indexOf('...', systemInitOffset);
-        if (relevantAsmStartsAt !== -1) {
-            const lastLinefeedBeforeStart = input.lastIndexOf('\n', relevantAsmStartsAt);
-            if (lastLinefeedBeforeStart === -1) {
-                input = input.substr(0, input.indexOf('00000000004')) + '\n' + input.substr(relevantAsmStartsAt);
-            } else {
-                input =
-                    input.substr(0, input.indexOf('00000000004')) + '\n' + input.substr(lastLinefeedBeforeStart + 1);
+        // todo: write some pascal logic into external asm-parser to only include user code,
+        //  this is currently a giant mess
+
+        const preamble = 'Disassembly of section .text:';
+        const disasmStart = input.indexOf(preamble);
+
+        let newSource = input.substring(0, disasmStart + preamble.length + 2);
+
+        let foundSourceAt = input.indexOf('/app/', disasmStart);
+        while (foundSourceAt !== -1) {
+            const endOfProc = input.indexOf('...', foundSourceAt);
+
+            const lookback = input.lastIndexOf('>:', foundSourceAt);
+            if (lookback === -1) break;
+            const furtherLookback = input.lastIndexOf('\n', lookback);
+            if (furtherLookback === -1) break;
+
+            if (endOfProc === -1) {
+                newSource = newSource + input.substring(furtherLookback) + '\n';
+                break;
             }
+            newSource = newSource + input.substring(furtherLookback, endOfProc + 3) + '\n';
+
+            foundSourceAt = input.indexOf('/app/', endOfProc + 3);
         }
-        return input;
+
+        return newSource.replaceAll('/app//', '/app/');
     }
 
-    override postProcessObjdumpOutput(output) {
+    override postProcessObjdumpOutput(output: string) {
         return FPCCompiler.preProcessBinaryAsm(output);
     }
 
     async saveDummyProjectFile(filename: string, unitName: string, unitPath: string) {
+        // biome-ignore format: keep as-is for readability
         await fs.writeFile(
             filename,
-            // prettier-ignore
             'program prog;\n' +
-            'uses ' + unitName + ' in \'' + unitPath + '\';\n' +
+            'uses ' + unitName + " in '" + unitPath + "';\n" +
             'begin\n' +
             'end.\n',
         );
     }
 
-    override async writeAllFiles(dirPath: string, source: string, files: any[], filters: ParseFiltersAndOutputOptions) {
-        let inputFilename;
-        if (this.pasUtils.isProgram(source)) {
-            inputFilename = path.join(dirPath, this.dprFilename);
+    getMainSourceFilename(source: string) {
+        let inputFilename: string;
+        if (pascalUtils.isProgram(source)) {
+            inputFilename = pascalUtils.getProgName(source) + '.dpr';
         } else {
-            const unitName = this.pasUtils.getUnitname(source);
+            const unitName = pascalUtils.getUnitname(source);
             if (unitName) {
-                inputFilename = path.join(dirPath, unitName + '.pas');
+                inputFilename = unitName + '.pas';
             } else {
-                inputFilename = path.join(dirPath, this.compileFilename);
+                inputFilename = this.compileFilename;
             }
         }
+
+        return inputFilename;
+    }
+
+    override async writeAllFiles(dirPath: string, source: string, files: any[], filters: ParseFiltersAndOutputOptions) {
+        const inputFilename = path.join(dirPath, this.getMainSourceFilename(source));
 
         if (source !== '' || !files) {
             await fs.writeFile(inputFilename, source);
@@ -186,19 +250,23 @@ export class FPCCompiler extends BaseCompiler {
         compiler: string,
         options: string[],
         inputFilename: string,
-        execOptions: ExecutionOptions,
+        execOptions: ExecutionOptionsWithEnv,
     ) {
         if (!execOptions) {
             execOptions = this.getDefaultExecOptions();
         }
 
-        const alreadyHasDPR = path.basename(inputFilename) === this.dprFilename;
+        const alreadyHasDPR = path.extname(inputFilename).toLowerCase() === '.dpr';
         const dirPath = path.dirname(inputFilename);
 
-        const projectFile = path.join(dirPath, this.dprFilename);
+        let projectFile = path.join(dirPath, this.dprFilename);
+        if (alreadyHasDPR) {
+            projectFile = inputFilename;
+        }
+
         execOptions.customCwd = dirPath;
         if (this.nasmPath) {
-            execOptions.env = _.clone(process.env);
+            execOptions.env = _.clone(process.env) as Record<string, string>;
             execOptions.env.PATH = execOptions.env.PATH + ':' + this.nasmPath;
         }
 
@@ -222,52 +290,51 @@ export class FPCCompiler extends BaseCompiler {
         return result;
     }
 
-    override getArgumentParser() {
+    override getArgumentParserClass() {
         return PascalParser;
     }
 
     getExtraAsmHint(asm: string, currentFileId: number) {
         if (asm.startsWith('# [')) {
             const bracketEndPos = asm.indexOf(']', 3);
-            let valueInBrackets = asm.substr(3, bracketEndPos - 3);
+            let valueInBrackets = asm.substring(3, bracketEndPos);
             const colonPos = valueInBrackets.indexOf(':');
             if (colonPos !== -1) {
-                valueInBrackets = valueInBrackets.substr(0, colonPos - 1);
+                valueInBrackets = valueInBrackets.substring(0, colonPos - 1);
             }
 
             if (valueInBrackets.startsWith('/')) {
-                valueInBrackets = valueInBrackets.substr(1);
+                valueInBrackets = valueInBrackets.substring(1);
             }
 
             if (Number.isNaN(Number(valueInBrackets))) {
                 return `  .file ${currentFileId} "${valueInBrackets}"`;
-            } else {
-                return `  .loc ${currentFileId} ${valueInBrackets} 0`;
             }
-        } else if (asm.startsWith('.Le')) {
-            return '  .cfi_endproc';
-        } else {
-            return false;
+            return `  .loc ${currentFileId} ${valueInBrackets} 0`;
         }
+        if (asm.startsWith('.Le')) {
+            return '  .cfi_endproc';
+        }
+        return false;
     }
 
     tryGetFilenumber(asm: string, files: Record<string, number>) {
         if (asm.startsWith('# [')) {
             const bracketEndPos = asm.indexOf(']', 3);
-            let valueInBrackets = asm.substr(3, bracketEndPos - 3);
+            let valueInBrackets = asm.substring(3, bracketEndPos);
             const colonPos = valueInBrackets.indexOf(':');
             if (colonPos !== -1) {
-                valueInBrackets = valueInBrackets.substr(0, colonPos - 1);
+                valueInBrackets = valueInBrackets.substring(0, colonPos - 1);
             }
 
             if (valueInBrackets.startsWith('/')) {
-                valueInBrackets = valueInBrackets.substr(1);
+                valueInBrackets = valueInBrackets.substring(1);
             }
 
             if (Number.isNaN(Number(valueInBrackets))) {
                 if (!files[valueInBrackets]) {
                     let maxFileId = _.max(files);
-                    if (maxFileId === -Infinity) {
+                    if (maxFileId === Number.NEGATIVE_INFINITY) {
                         maxFileId = 0;
                     }
 

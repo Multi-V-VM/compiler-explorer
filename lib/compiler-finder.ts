@@ -22,26 +22,27 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import http from 'http';
-import https from 'https';
-import path from 'path';
-import {promisify} from 'util';
-
-import fs from 'fs-extra';
+import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
+import path from 'node:path';
+import {promisify} from 'node:util';
 import _ from 'underscore';
 import urljoin from 'url-join';
 
+import {basic_comparator, remove} from '../shared/common-utils.js';
 import type {CompilerInfo, PreliminaryCompilerInfo} from '../types/compiler.interfaces.js';
+import {InstructionSet, InstructionSetsList} from '../types/instructionsets.js';
 import type {Language, LanguageKey} from '../types/languages.interfaces.js';
+import {Tool, ToolInfo} from '../types/tool.interfaces.js';
+import {AppArguments} from './app.interfaces.js';
 
-import {unwrap} from './assert.js';
-import {InstanceFetcher} from './aws.js';
+import {assert, unwrap, unwrapString} from './assert.js';
 import {CompileHandler} from './handlers/compile.js';
 import {logger} from './logger.js';
-import {ClientOptionsHandler, OptionHandlerArguments} from './options-handler.js';
-import {CompilerProps} from './properties.js';
+import {ClientOptionsHandler} from './options-handler.js';
 import type {PropertyGetter} from './properties.interfaces.js';
-import {basic_comparator, remove} from './common-utils.js';
+import {CompilerProps, getRawProperties} from './properties.js';
 import {getPossibleGccToolchainsFromCompilerInfo} from './toolchain-utils.js';
 
 const sleep = promisify(setTimeout);
@@ -52,33 +53,41 @@ const sleep = promisify(setTimeout);
 export class CompilerFinder {
     compilerProps: CompilerProps['get'];
     ceProps: PropertyGetter;
-    awsProps: PropertyGetter;
-    args: OptionHandlerArguments;
+    args: AppArguments;
     compileHandler: CompileHandler;
     languages: Record<string, Language>;
-    awsPoller: InstanceFetcher | null = null;
     optionsHandler: ClientOptionsHandler;
 
     constructor(
         compileHandler: CompileHandler,
         compilerProps: CompilerProps,
-        awsProps: PropertyGetter,
-        args: OptionHandlerArguments,
+        args: AppArguments,
         optionsHandler: ClientOptionsHandler,
     ) {
         this.compilerProps = compilerProps.get.bind(compilerProps);
         this.ceProps = compilerProps.ceProps;
-        this.awsProps = awsProps;
         this.args = args;
         this.compileHandler = compileHandler;
         this.languages = compilerProps.languages;
-        this.awsPoller = null;
         this.optionsHandler = optionsHandler;
     }
 
-    awsInstances() {
-        if (!this.awsPoller) this.awsPoller = new InstanceFetcher(this.awsProps);
-        return this.awsPoller.getInstances();
+    static prepareRemoteUrlParts(host: string, port: number, uriBase: string, langId: string | null) {
+        const uriSchema = port === 443 ? 'https' : 'http';
+        return {
+            uriSchema: uriSchema,
+            uri: urljoin(`${uriSchema}://${host}:${port}`, uriBase),
+            apiPath: urljoin('/', uriBase || '', 'api/compilers', langId || '', '?fields=all'),
+        };
+    }
+
+    static getRemoteInfo(uriSchema: string, host: string, port: number, uriBase: string, compilerId: string) {
+        return {
+            target: `${uriSchema}://${host}:${port}`,
+            path: urljoin('/', uriBase, 'api/compiler', compilerId, 'compile'),
+            cmakePath: urljoin('/', uriBase, 'api/compiler', compilerId, 'cmake'),
+            basePath: urljoin('/', uriBase),
+        };
     }
 
     async fetchRemote(
@@ -89,9 +98,7 @@ export class CompilerFinder {
         langId: string | null,
     ): Promise<CompilerInfo[] | null> {
         const requestLib = port === 443 ? https : http;
-        const uriSchema = port === 443 ? 'https' : 'http';
-        const uri = urljoin(`${uriSchema}://${host}:${port}`, uriBase);
-        const apiPath = urljoin('/', uriBase || '', 'api/compilers', langId || '', '?fields=all');
+        const {uriSchema, uri, apiPath} = CompilerFinder.prepareRemoteUrlParts(host, port, uriBase, langId);
         logger.info(`Fetching compilers from remote source ${uri}`);
         return this.retryPromise(
             () => {
@@ -139,17 +146,14 @@ export class CompilerFinder {
                                 res.on('end', () => {
                                     try {
                                         const compilers = (JSON.parse(str) as CompilerInfo[]).map(compiler => {
-                                            // Fix up old upstream implementations of Compiler Explorer
-                                            // e.g. https://www.godbolt.ms
-                                            // (see https://github.com/compiler-explorer/compiler-explorer/issues/1768)
-                                            if (!compiler.alias) compiler.alias = [];
-                                            if (typeof compiler.alias == 'string') compiler.alias = [compiler.alias];
-                                            // End fixup
                                             compiler.exe = '/dev/null';
-                                            compiler.remote = {
-                                                target: `${uriSchema}://${host}:${port}`,
-                                                path: urljoin('/', uriBase, 'api/compiler', compiler.id, 'compile'),
-                                            };
+                                            compiler.remote = CompilerFinder.getRemoteInfo(
+                                                uriSchema,
+                                                host,
+                                                port,
+                                                uriBase,
+                                                compiler.id,
+                                            );
                                             return compiler;
                                         });
                                         resolve(compilers);
@@ -162,7 +166,7 @@ export class CompilerFinder {
                         )
                         .on('error', reject)
                         .on('timeout', () => reject('timeout'));
-                    request.setTimeout(this.awsProps('proxyTimeout', 1000));
+                    request.setTimeout(this.ceProps('proxyTimeout', 1000));
                 });
             },
             `${host}:${port}`,
@@ -172,25 +176,6 @@ export class CompilerFinder {
             logger.warn(`Unable to contact ${host}:${port}; skipping`);
             return [];
         });
-    }
-
-    async fetchAws() {
-        logger.info('Fetching instances from AWS');
-        const instances = await this.awsInstances();
-        return remove(
-            (
-                await Promise.all(
-                    instances.map(instance => {
-                        logger.info('Checking instance ' + instance.InstanceId);
-                        const address = this.awsProps('externalTestMode', false)
-                            ? instance.PublicDnsName
-                            : instance.PrivateDnsName;
-                        return this.fetchRemote(unwrap(address), this.args.port, '', this.awsProps, null);
-                    }),
-                )
-            ).flat(),
-            null,
-        );
     }
 
     async compilerConfigFor(
@@ -217,6 +202,7 @@ export class CompilerFinder {
 
         const supportsBinary = !!props('supportsBinary', true);
         const supportsBinaryObject = !!props('supportsBinaryObject', false);
+        const emulated = !!props('emulated', false);
         const interpreted = !!props('interpreted', false);
         const supportsExecute = (interpreted || supportsBinary) && !!props('supportsExecute', true);
         const executionWrapper = props('executionWrapper', '');
@@ -226,6 +212,7 @@ export class CompilerFinder {
         const group = props('group', '');
 
         const demanglerProp = props('demangler', '');
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: This is an intentional placeholder replaced at runtime
         const demangler = demanglerProp ? path.normalize(demanglerProp.replace('${ceToolsPath}', ceToolsPath)) : '';
 
         const isSemVer = props('isSemVer', false);
@@ -258,6 +245,11 @@ export class CompilerFinder {
         })();
         const exe = props('exe', compilerId);
         const exePath = path.dirname(exe);
+        const instructionSet = props<string | number>('instructionSet', '').toString() as InstructionSet | '';
+        assert(
+            instructionSet === '' || InstructionSetsList.includes(instructionSet),
+            `Unexpected instruction set ${instructionSet} ${compilerId}`,
+        );
         const compilerInfo: PreliminaryCompilerInfo = {
             id: compilerId,
             exe: exe,
@@ -281,12 +273,13 @@ export class CompilerFinder {
             objdumperArgs: splitArrayPropsOrEmpty('objdumperArgs', '|'),
             intelAsm: props('intelAsm', ''),
             supportsAsmDocs: props('supportsAsmDocs', true),
-            instructionSet: props<string | number>('instructionSet', '').toString(),
+            instructionSet: instructionSet === '' ? null : instructionSet,
             needsMulti: !!props('needsMulti', true),
             adarts: props('adarts', ''),
             supportsDemangle: !!demangler,
             supportsBinary,
             supportsBinaryObject,
+            emulated,
             interpreted,
             supportsExecute,
             executionWrapper,
@@ -304,14 +297,22 @@ export class CompilerFinder {
             libPath: props('libPath', '')
                 .split(path.delimiter)
                 .filter(p => p !== '')
+                // biome-ignore lint/suspicious/noTemplateCurlyInString: This is an intentional placeholder replaced at runtime
                 .map(x => path.normalize(x.replace('${exePath}', exePath))),
             ldPath: props('ldPath', '')
                 .split('|')
+                // biome-ignore lint/suspicious/noTemplateCurlyInString: This is an intentional placeholder replaced at runtime
+                .map(x => path.normalize(x.replace('${exePath}', exePath))),
+            extraPath: props('extraPath', '')
+                .split(path.delimiter)
+                .filter(p => p !== '')
+                // biome-ignore lint/suspicious/noTemplateCurlyInString: This is an intentional placeholder replaced at runtime
                 .map(x => path.normalize(x.replace('${exePath}', exePath))),
             envVars: envVars,
             notification: props('notification', ''),
             isSemVer: isSemVer,
             semver: semverVer,
+            isNightly: props('isNightly', false),
             libsArr: this.getSupportedLibrariesArr(props),
             tools: _.omit(this.optionsHandler.get().tools[langId], tool => tool.isCompilerExcluded(compilerId, props)),
             unwiseOptions: splitArrayPropsOrEmpty('unwiseOptions', '|'),
@@ -324,7 +325,7 @@ export class CompilerFinder {
             },
             externalparser: {
                 id: props('externalparser', ''),
-                props: (name, def) => {
+                props: (name: string, def: any) => {
                     return props(`externalparser.${name}`, def);
                 },
             },
@@ -332,8 +333,11 @@ export class CompilerFinder {
                 link: props<string>('licenseLink'),
                 name: props<string>('licenseName'),
                 preamble: props<string>('licensePreamble'),
+                invasive: props<boolean>('licenseInvasive', false),
             },
             possibleOverrides: [],
+            possibleRuntimeTools: [],
+            $order: undefined as unknown as number, // TODO(jeremy-rifkin): Very dirty
         };
 
         if (props('demanglerClassFile') !== undefined) {
@@ -354,6 +358,16 @@ export class CompilerFinder {
             .filter(a => a !== '');
     }
 
+    static getRemotePartsFromCompilerName(remoteCompilerName: string) {
+        const bits = remoteCompilerName.split('@');
+        const pathParts = bits[1].split('/');
+        return {
+            host: bits[0],
+            port: Number.parseInt(unwrap(pathParts.shift()), 10),
+            uriBase: pathParts.join('/'),
+        };
+    }
+
     async recurseGetCompilers(
         langId: string,
         compilerName: string,
@@ -361,17 +375,13 @@ export class CompilerFinder {
     ): Promise<PreliminaryCompilerInfo[]> {
         // Don't treat @ in paths as remote addresses if requested
         if (this.args.fetchCompilersFromRemote && compilerName.includes('@')) {
-            const bits = compilerName.split('@');
-            const host = bits[0];
-            const pathParts = bits[1].split('/');
-            const port = parseInt(unwrap(pathParts.shift()));
-            const path = pathParts.join('/');
-            return (await this.fetchRemote(host, port, path, this.ceProps, langId)) || [];
+            const {host, port, uriBase} = CompilerFinder.getRemotePartsFromCompilerName(compilerName);
+            return (await this.fetchRemote(host, port, uriBase, this.ceProps, langId)) || [];
         }
         if (compilerName.indexOf('&') === 0) {
             const groupName = compilerName.substring(1);
 
-            const props: CompilerProps['get'] = (langId, name, def?): any => {
+            const props: CompilerProps['get'] = (langId, name: string, def?): any => {
                 if (name === 'group') {
                     return groupName;
                 }
@@ -381,10 +391,13 @@ export class CompilerFinder {
                 .split(':')
                 .filter(s => s !== '');
             logger.debug(`Processing compilers from group ${groupName}`);
-            return (await Promise.all(exes.map(compiler => this.recurseGetCompilers(langId, compiler, props)))).flat();
+            const allCompilers = await Promise.all(
+                exes.map(compiler => this.recurseGetCompilers(langId, compiler, props)),
+            );
+            return allCompilers.flat();
         }
-        if (compilerName === 'AWS') return this.fetchAws();
-        return remove([await this.compilerConfigFor(langId, compilerName, parentProps)], null);
+        const configs = [await this.compilerConfigFor(langId, compilerName, parentProps)];
+        return remove(configs, null);
     }
 
     async getCompilers() {
@@ -394,7 +407,8 @@ export class CompilerFinder {
                 compilers.push(this.recurseGetCompilers(langId, exe, this.compilerProps));
             }
         }
-        return (await Promise.all(compilers)).flat();
+        const completeCompilers = await Promise.all(compilers);
+        return completeCompilers.flat();
     }
 
     ensureDistinct(compilers: CompilerInfo[]) {
@@ -443,27 +457,120 @@ export class CompilerFinder {
         return langToCompilers;
     }
 
-    addNdkExes(langToCompilers) {
+    addNdkExes(langToCompilers: Record<LanguageKey, string[]>) {
         const ndkPaths = this.compilerProps(this.languages, 'androidNdk') as unknown as Record<string, string>;
         for (const [langId, ndkPath] of Object.entries(ndkPaths)) {
             if (ndkPath) {
                 const toolchains = fs.readdirSync(`${ndkPath}/toolchains`);
-                for (const [version, index] of toolchains) {
-                    const path = `${ndkPath}/toolchains/${version}/prebuilt/linux-x86_64/bin/`;
-                    if (fs.existsSync(path)) {
-                        const cc = fs.readdirSync(path).find(filename => filename.includes('g++'));
-                        toolchains[index] = path + cc;
-                    } else {
-                        toolchains[index] = null;
+                for (const version of toolchains) {
+                    const path = `${ndkPath}/toolchains/${version}/prebuilt/linux-x86_64/bin`;
+                    for (const exe of fs.readdirSync(path)) {
+                        if (exe.endsWith('clang++') || exe.endsWith('g++')) {
+                            langToCompilers[langId as LanguageKey].push(`${path}/${exe}`);
+                        }
                     }
                 }
-                // TODO: Something awful is going on with the type of toolchains here
-                langToCompilers[langId].push(toolchains.filter(x => x !== null));
             }
         }
     }
 
+    checkOrphanedProperties() {
+        // Quickly check for any orphaned compilers
+        let error = false;
+        for (const domains of [
+            ['amazon', 'amazonwin', 'gpu'],
+            ['defaults', 'local'],
+        ]) {
+            const compilers = new Set<string>();
+            // duplicate groups across languages is ok, so storing lang.group in the set
+            const groups = new Set<string>();
+            const reachableCompilers = new Set<string>();
+            const reachableGroups = new Set<string>();
+            const rawProps = getRawProperties();
+            for (const [prop, props] of Object.entries(rawProps)) {
+                const [lang, domain] = prop.split('.');
+                if (domains.includes(domain)) {
+                    if (domain === 'defaults' && `${lang}.local` in rawProps) {
+                        continue; // let .local override
+                    }
+                    for (const [prop, value] of Object.entries(props)) {
+                        const propParts = prop.split('.');
+                        if (prop === 'compilers') {
+                            for (const compiler of unwrapString(value).split(':')) {
+                                if (compiler.startsWith('&')) {
+                                    reachableGroups.add(`${lang}.${compiler.slice(1)}`);
+                                } else {
+                                    reachableCompilers.add(compiler);
+                                }
+                            }
+                        }
+                        if (propParts[0] === 'group') {
+                            if (propParts[2] === 'compilers') {
+                                // should appear exactly once
+                                const fullGroup = `${lang}.${propParts[1]}`;
+                                if (groups.has(fullGroup)) {
+                                    const [lang, realGroup] = fullGroup.split('.');
+                                    logger.error(
+                                        `Duplicate group id ${realGroup} for ${lang} in domain ${domains.join(',')}`,
+                                    );
+                                    error = true;
+                                }
+                                groups.add(fullGroup);
+                                for (const compiler of unwrapString(value).split(':')) {
+                                    if (compiler.startsWith('&')) {
+                                        reachableGroups.add(`${lang}.${compiler.slice(1)}`);
+                                    } else {
+                                        reachableCompilers.add(compiler);
+                                    }
+                                }
+                            }
+                        }
+                        if (propParts[0] === 'compiler') {
+                            if (propParts[2] === 'exe') {
+                                // should appear exactly once
+                                if (compilers.has(propParts[1])) {
+                                    logger.error(
+                                        `Duplicate compiler id ${propParts[1]} in domain ${domains.join(',')}`,
+                                    );
+                                    // android-java and android-kotlin are
+                                    // expected to use the exact same compilers.
+                                    if (lang !== 'android-java' && lang !== 'android-kotlin') {
+                                        error = true;
+                                    }
+                                }
+                                compilers.add(propParts[1]);
+                            }
+                        }
+                    }
+                }
+            }
+            for (const group of groups) {
+                if (!reachableGroups.has(group)) {
+                    const [lang, realGroup] = group.split('.');
+                    logger.error(
+                        `Group ${realGroup} is orphaned from the language compilers list for ` +
+                            `${lang} in domain ${domains.join(',')}`,
+                    );
+                    error = true;
+                }
+            }
+            for (const compiler of compilers) {
+                if (!reachableCompilers.has(compiler)) {
+                    logger.error(`Compiler ${compiler} is not part of any group in domain ${domains.join(',')}`);
+                    error = true;
+                }
+            }
+        }
+        if (error) {
+            logger.error(
+                'Note there are orphaned compiler properties, please fix them unless you are doing this on purpose',
+            );
+        }
+    }
+
     async find() {
+        this.checkOrphanedProperties();
+
         const compilerList = await this.getCompilers();
 
         const toolchains = await getPossibleGccToolchainsFromCompilerInfo(compilerList);
@@ -492,7 +599,7 @@ export class CompilerFinder {
             }
 
             if (compiler.externalparser) {
-                compiler.externalparser.props = (propName, def) => {
+                compiler.externalparser.props = (propName: string, def: any) => {
                     return this.compilerProps(langId, 'externalparser.' + propName, def);
                 };
             }
@@ -500,7 +607,7 @@ export class CompilerFinder {
             if (!compiler.remote && compiler.tools) {
                 const fullOptions = this.optionsHandler.get();
 
-                const toolinstances = {};
+                const toolinstances: Record<ToolInfo['id'], Tool> = {};
                 for (const toolId in compiler.tools) {
                     if (fullOptions.tools[langId][toolId]) {
                         toolinstances[toolId] = fullOptions.tools[langId][toolId];

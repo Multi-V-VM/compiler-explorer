@@ -22,10 +22,11 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import path from 'path';
-
-import fs from 'fs-extra';
-import LRU from 'lru-cache';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import {Buffer} from 'buffer';
+import {LRUCache} from 'lru-cache';
 
 import type {GetResult} from '../../types/cache.interfaces.js';
 import {logger} from '../logger.js';
@@ -33,9 +34,11 @@ import {logger} from '../logger.js';
 import {BaseCache} from './base.js';
 
 // With thanks to https://gist.github.com/kethinov/6658166
-function getAllFiles(root: string, dir?: string) {
+type relFile = {name: string; fullPath: string};
+
+function getAllFiles(root: string, dir?: string): Array<relFile> {
     const actualDir = dir || root;
-    return fs.readdirSync(actualDir).reduce((files: Array<string>, file: string) => {
+    return fs.readdirSync(actualDir).reduce((files: Array<relFile>, file: string) => {
         const fullPath = path.join(actualDir, file);
         const name = path.relative(root, fullPath);
         const isDirectory = fs.statSync(fullPath).isDirectory();
@@ -48,13 +51,13 @@ type CacheEntry = {path: string; size: number};
 export class OnDiskCache extends BaseCache {
     readonly path: string;
     readonly cacheMb: number;
-    private readonly cache: LRU<string, CacheEntry>;
+    private readonly cache: LRUCache<string, CacheEntry>;
 
     constructor(cacheName: string, path: string, cacheMb: number) {
         super(cacheName, `OnDiskCache(${path}, ${cacheMb}mb)`, 'disk');
         this.path = path;
         this.cacheMb = cacheMb;
-        this.cache = new LRU({
+        this.cache = new LRUCache({
             maxSize: cacheMb * 1024 * 1024,
             sizeCalculation: n => n.size,
             noDisposeOnSet: true,
@@ -78,10 +81,14 @@ export class OnDiskCache extends BaseCache {
                     },
                 };
             })
-            .filter(x => x);
+            .filter(Boolean);
+
         // Sort oldest first
+
+        // @ts-expect-error filter(Boolean) should have sufficed but doesn't
         info.sort((x, y) => x.sort - y.sort);
         for (const i of info) {
+            // @ts-expect-error
             this.cache.set(i.key, i.data);
         }
     }
@@ -98,7 +105,7 @@ export class OnDiskCache extends BaseCache {
         if (!cached) return {hit: false};
 
         try {
-            const data = await fs.readFile(cached.path);
+            const data = await fs.promises.readFile(cached.path);
             return {hit: true, data: data};
         } catch (err) {
             logger.error(`error reading '${key}' from disk cache: `, err);
@@ -112,9 +119,9 @@ export class OnDiskCache extends BaseCache {
             size: value.length,
         };
         // Write to a temp file and then rename
-        const tempFile = info.path + '.tmp';
-        await fs.writeFile(tempFile, value);
-        await fs.rename(tempFile, info.path);
+        const tempFile = info.path + `.tmp.${crypto.randomUUID()}`;
+        await fs.promises.writeFile(tempFile, value);
+        await fs.promises.rename(tempFile, info.path);
         this.cache.set(key, info);
     }
 }

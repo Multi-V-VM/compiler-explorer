@@ -22,29 +22,34 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+import path from 'node:path';
+
+import {afterAll, beforeAll, describe, expect, it} from 'vitest';
+
 import {BaseCompiler} from '../lib/base-compiler.js';
 import {BuildEnvSetupBase} from '../lib/buildenvsetup/index.js';
 import {CompilationEnvironment} from '../lib/compilation-env.js';
+import {ClangCompiler} from '../lib/compilers/clang.js';
+import {RustCompiler} from '../lib/compilers/rust.js';
 import {Win32Compiler} from '../lib/compilers/win32.js';
-import * as exec from '../lib/exec.js';
+import * as props from '../lib/properties.js';
+import {splitArguments} from '../shared/common-utils.js';
 import {CompilerOverrideType, ConfiguredOverrides} from '../types/compilation/compiler-overrides.interfaces.js';
 import {CompilerInfo} from '../types/compiler.interfaces.js';
 
 import {
-    fs,
     makeCompilationEnvironment,
     makeFakeCompilerInfo,
     makeFakeParseFiltersAndOutputOptions,
-    path,
-    should,
     shouldExist,
 } from './utils.js';
 
 const languages = {
     'c++': {id: 'c++'},
+    rust: {id: 'rust'},
 } as const;
 
-describe('Basic compiler invariants', function () {
+describe('Basic compiler invariants', () => {
     let ce: CompilationEnvironment;
     let compiler: BaseCompiler;
 
@@ -53,66 +58,34 @@ describe('Basic compiler invariants', function () {
         remote: {
             target: 'foo',
             path: 'bar',
+            cmakePath: 'cmake',
+            basePath: '/',
         },
         lang: 'c++',
         ldPath: [],
     };
 
-    before(() => {
+    beforeAll(() => {
         ce = makeCompilationEnvironment({languages});
         compiler = new BaseCompiler(info as CompilerInfo, ce);
     });
 
     it('should recognize when optOutput has been request', () => {
-        compiler.optOutputRequested(['please', 'recognize', '-fsave-optimization-record']).should.equal(true);
-        compiler.optOutputRequested(['please', "don't", 'recognize']).should.equal(false);
-    });
-    // Overkill test, but now we're safer!
-    it('should recognize cfg compilers', () => {
-        compiler
-            .isCfgCompiler(
-                'clang version 5.0.0 (https://github.com/asutton/clang.git 449c8c3e91355a3b2b6761e11d9fb5d3c125b791) (https://github.com/llvm-mirror/llvm.git 40b1e969f9cb2a0c697e247435193fb006ef1311)',
-            )
-            .should.equal(true);
-        compiler.isCfgCompiler('clang version 4.0.0 (tags/RELEASE_400/final 299826)').should.equal(true);
-        compiler.isCfgCompiler('clang version 7.0.0 (trunk 325868)').should.equal(true);
-        compiler.isCfgCompiler('clang version 3.3 (tags/RELEASE_33/final)').should.equal(true);
-        compiler
-            .isCfgCompiler('clang version 6.0.0 (tags/RELEASE_600/final 327031) (llvm/tags/RELEASE_600/final 327028)')
-            .should.equal(true);
-
-        compiler.isCfgCompiler('g++ (GCC-Explorer-Build) 4.9.4').should.equal(true);
-        compiler.isCfgCompiler('g++ (GCC-Explorer-Build) 8.0.1 20180223 (experimental)').should.equal(true);
-        compiler.isCfgCompiler('g++ (GCC-Explorer-Build) 8.0.1 20180223 (experimental)').should.equal(true);
-        compiler.isCfgCompiler('g++ (GCC) 4.1.2').should.equal(true);
-
-        compiler.isCfgCompiler('foo-bar-g++ (GCC-Explorer-Build) 4.9.4').should.equal(true);
-        compiler.isCfgCompiler('foo-bar-gcc (GCC-Explorer-Build) 4.9.4').should.equal(true);
-        compiler.isCfgCompiler('foo-bar-gdc (GCC-Explorer-Build) 4.9.4').should.equal(true);
-
-        compiler.isCfgCompiler('fake-for-test (Based on g++)').should.equal(false);
-
-        compiler.isCfgCompiler('gdc (crosstool-NG 203be35 - 20160205-2.066.1-e95a735b97) 5.2.0').should.equal(true);
-        compiler
-            .isCfgCompiler('gdc (crosstool-NG hg+unknown-20131212.080758 - 20140430-2.064.2-404a037d26) 4.8.2')
-            .should.equal(true);
-        compiler
-            .isCfgCompiler('gdc (crosstool-NG crosstool-ng-1.20.0-232-gc746732 - 20150830-2.066.1-d0dd4a83de) 4.9.3')
-            .should.equal(true);
-
-        compiler.isCfgCompiler('fake-for-test (Based on gdc)').should.equal(false);
+        expect(compiler.optOutputRequested(['please', 'recognize', '-fsave-optimization-record'])).toBe(true);
+        expect(compiler.optOutputRequested(['please', "don't", 'recognize'])).toBe(false);
     });
     it('should allow comments next to includes (Bug #874)', () => {
-        should.equal(compiler.checkSource('#include <cmath> // std::(sin, cos, ...)'), null);
+        expect(compiler.checkSource('#include <cmath> // std::(sin, cos, ...)')).toBeNull();
         const badSource = compiler.checkSource('#include </dev/null..> //Muehehehe');
         if (shouldExist(badSource)) {
-            badSource.should.equal('<stdin>:1:1: no absolute or relative includes please');
+            expect(badSource).toEqual('<stdin>:1:1: no absolute or relative includes please');
         }
     });
     it('should not warn of path-likes outside C++ includes (Bug #3045)', () => {
         function testIncludeG(text: string) {
-            should.equal(compiler.checkSource(text), null);
+            expect(compiler.checkSource(text)).toBeNull();
         }
+
         testIncludeG('#include <iostream>');
         testIncludeG('#include <iostream>  // <..>');
         testIncludeG('#include <type_traits> // for std::is_same_v<...>');
@@ -121,8 +94,9 @@ describe('Basic compiler invariants', function () {
     });
     it('should not allow path C++ includes', () => {
         function testIncludeNotG(text: string) {
-            should.equal(compiler.checkSource(text), '<stdin>:1:1: no absolute or relative includes please');
+            expect(compiler.checkSource(text)).toEqual('<stdin>:1:1: no absolute or relative includes please');
         }
+
         testIncludeNotG('#include <./.bashrc>');
         testIncludeNotG('#include </dev/null>  // <..>');
         testIncludeNotG('#include <../fish.config> // for std::is_same_v<...>');
@@ -132,20 +106,22 @@ describe('Basic compiler invariants', function () {
         const newConfig: Partial<CompilerInfo> = {...info, explicitVersion: '123'};
         const forcedVersionCompiler = new BaseCompiler(newConfig as CompilerInfo, ce);
         const result = await forcedVersionCompiler.getVersion();
-        result.stdout.should.deep.equal(['123']);
+        expect(result?.stdout).toEqual('123');
     });
 });
 
-describe('Compiler execution', function () {
+describe('Compiler execution', () => {
     let ce: CompilationEnvironment;
     let compiler: BaseCompiler;
-    let compilerNoExec: BaseCompiler;
+    // let compilerNoExec: BaseCompiler;
     let win32compiler: Win32Compiler;
 
     const executingCompilerInfo = makeFakeCompilerInfo({
         remote: {
             target: 'foo',
             path: 'bar',
+            cmakePath: 'cmake',
+            basePath: '/',
         },
         lang: 'c++',
         ldPath: [],
@@ -153,31 +129,40 @@ describe('Compiler execution', function () {
         supportsExecute: true,
         supportsBinary: true,
         options: '--hello-abc -I"/opt/some thing 1.0/include" -march="magic 8bit"',
+        exe: 'compiler-exe',
     });
     const win32CompilerInfo = makeFakeCompilerInfo({
         remote: {
             target: 'foo',
             path: 'bar',
+            cmakePath: 'cmake',
+            basePath: '/',
         },
         lang: 'c++',
         ldPath: [],
         supportsExecute: true,
         supportsBinary: true,
         options: '/std=c++17 /I"C:/program files (x86)/Company name/Compiler 1.2.3/include" /D "MAGIC=magic 8bit"',
+        exe: 'compiler.exe',
     });
     const noExecuteSupportCompilerInfo = makeFakeCompilerInfo({
         remote: {
             target: 'foo',
             path: 'bar',
+            cmakePath: 'cmake',
+            basePath: '/',
         },
         lang: 'c++',
         ldPath: [],
         libPath: [],
+        exe: 'g++',
     });
     const someOptionsCompilerInfo = makeFakeCompilerInfo({
         remote: {
             target: 'foo',
             path: 'bar',
+            cmakePath: 'cmake',
+            basePath: '/',
         },
         lang: 'c++',
         ldPath: [],
@@ -185,28 +170,29 @@ describe('Compiler execution', function () {
         supportsExecute: true,
         supportsBinary: true,
         options: '--hello-abc -I"/opt/some thing 1.0/include"',
+        exe: 'clang++',
     });
 
-    before(() => {
+    beforeAll(() => {
         ce = makeCompilationEnvironment({languages});
         compiler = new BaseCompiler(executingCompilerInfo, ce);
         win32compiler = new Win32Compiler(win32CompilerInfo, ce);
-        compilerNoExec = new BaseCompiler(noExecuteSupportCompilerInfo, ce);
+        // compilerNoExec = new BaseCompiler(noExecuteSupportCompilerInfo, ce);
     });
 
     // afterEach(() => restore());
 
-    function stubOutCallToExec(execStub, compiler, content, result, nthCall) {
-        execStub.onCall(nthCall || 0).callsFake((compiler, args) => {
-            const minusO = args.indexOf('-o');
-            minusO.should.be.gte(0);
-            const output = args[minusO + 1];
-            // Maybe we should mock out the FS too; but that requires a lot more work.
-            fs.writeFileSync(output, content);
-            result.filenameTransform = (x: string) => x;
-            return Promise.resolve(result);
-        });
-    }
+    // function stubOutCallToExec(execStub, compiler, content, result, nthCall) {
+    //     execStub.onCall(nthCall || 0).callsFake((compiler, args) => {
+    //         const minusO = args.indexOf('-o');
+    //         expect(minusO).toBeGreaterThanOrEqual(0);
+    //         const output = args[minusO + 1];
+    //         // Maybe we should mock out the FS too; but that requires a lot more work.
+    //         fs.writeFileSync(output, content);
+    //         result.filenameTransform = (x: string) => x;
+    //         return Promise.resolve(result);
+    //     });
+    // }
 
     it('basecompiler should handle spaces in options correctly', () => {
         const userOptions = [];
@@ -225,7 +211,7 @@ describe('Compiler execution', function () {
             libraries,
             [],
         );
-        args.should.deep.equal([
+        expect(args).toEqual([
             '-g',
             '-o',
             'example.s',
@@ -254,7 +240,7 @@ describe('Compiler execution', function () {
             libraries,
             [],
         );
-        win32args.should.deep.equal([
+        expect(win32args).toEqual([
             '/nologo',
             '/FA',
             '/c',
@@ -270,19 +256,19 @@ describe('Compiler execution', function () {
 
     it('buildenv should handle spaces correctly', () => {
         const buildenv = new BuildEnvSetupBase(executingCompilerInfo, ce);
-        buildenv.getCompilerArch().should.equal('magic 8bit');
+        expect(buildenv.getCompilerArch()).toEqual('magic 8bit');
     });
 
     it('buildenv compiler without target/march', () => {
         const buildenv = new BuildEnvSetupBase(noExecuteSupportCompilerInfo, ce);
-        buildenv.getCompilerArch().should.equal(false);
-        buildenv.compilerSupportsX86.should.equal(true);
+        expect(buildenv.getCompilerArch()).toBe(false);
+        expect(buildenv.compilerSupportsX86).toBe(true);
     });
 
     it('buildenv compiler without target/march but with options', () => {
         const buildenv = new BuildEnvSetupBase(someOptionsCompilerInfo, ce);
-        buildenv.getCompilerArch().should.equal(false);
-        buildenv.compilerSupportsX86.should.equal(true);
+        expect(buildenv.getCompilerArch()).toBe(false);
+        expect(buildenv.compilerSupportsX86).toBe(true);
     });
 
     it('compiler overrides should be sanitized', () => {
@@ -312,10 +298,10 @@ describe('Compiler execution', function () {
 
         compiler.applyOverridesToExecOptions(execOptions, sanitized);
 
-        Object.keys(execOptions.env).should.include('SOMEVAR');
-        execOptions.env['SOMEVAR'].should.equal('123');
-        Object.keys(execOptions.env).should.not.include('LD_PRELOAD');
-        Object.keys(execOptions.env).should.not.include('ABC$#%@6@5');
+        expect(execOptions.env).toHaveProperty('SOMEVAR');
+        expect(execOptions.env['SOMEVAR']).toEqual('123');
+        expect(execOptions.env).not.toHaveProperty('LD_PRELOAD');
+        expect(execOptions.env).not.toHaveProperty('ABC$#%@6@5');
     });
 
     // it('should compile', async () => {
@@ -651,104 +637,173 @@ describe('Compiler execution', function () {
     //     return objdumpTest('llvm', ['-d', 'output', '-l', '-C', '--x86-asm-syntax=intel']);
     // });
 
-    it('should run process opt output', async () => {
-        const test = `--- !Missed
-Pass: inline
-Name: NeverInline
-DebugLoc: { File: example.cpp, Line: 4, Column: 21 }
-Function: main
-Args: []
-...
-`;
-        const dirPath = await compiler.newTempDir();
-        const optPath = path.join(dirPath, 'temp.out');
-        await fs.writeFile(optPath, test);
-        const a = await compiler.processOptOutput(optPath);
-        a.should.deep.equal([
-            {
-                Args: [],
-                DebugLoc: {Column: 21, File: 'example.cpp', Line: 4},
-                Function: 'main',
-                Name: 'NeverInline',
-                Pass: 'inline',
-                displayString: '',
-                optType: 'Missed',
-            },
-        ]);
-    });
-
     it('should normalize extra file path', () => {
         const withDemangler = {...noExecuteSupportCompilerInfo, demangler: 'demangler-exe', demanglerType: 'cpp'};
-        const compiler = new BaseCompiler(withDemangler, ce);
+        const compiler = new BaseCompiler(withDemangler, ce) as any; // to get to the protected...
         if (process.platform === 'win32') {
-            (compiler as any)
-                .getExtraFilepath('c:/tmp/somefolder', 'test.h')
-                .should.equal('c:\\tmp\\somefolder\\test.h');
+            expect(compiler.getExtraFilepath('c:/tmp/somefolder', 'test.h')).toEqual('c:\\tmp\\somefolder\\test.h');
         } else {
-            (compiler as any).getExtraFilepath('/tmp/somefolder', 'test.h').should.equal('/tmp/somefolder/test.h');
+            expect(compiler.getExtraFilepath('/tmp/somefolder', 'test.h')).toEqual('/tmp/somefolder/test.h');
         }
 
-        try {
-            (compiler as any).getExtraFilepath('/tmp/somefolder', '../test.h');
-            throw 'Should throw exception 1';
-        } catch (error) {
-            if (!(error instanceof Error)) {
-                throw error;
-            }
-        }
+        expect(() => compiler.getExtraFilepath('/tmp/somefolder', '../test.h')).toThrow(Error);
+        expect(() => compiler.getExtraFilepath('/tmp/somefolder', './../test.h')).toThrow(Error);
 
-        try {
-            (compiler as any).getExtraFilepath('/tmp/somefolder', './../test.h');
-            throw 'Should throw exception 2';
-        } catch (error) {
-            if (!(error instanceof Error)) {
-                throw error;
-            }
-        }
-
-        try {
-            (compiler as any)
-                .getExtraFilepath('/tmp/somefolder', '/tmp/someotherfolder/test.h')
-                .should.equal('/tmp/somefolder/tmp/someotherfolder/test.h');
-        } catch (error) {
-            if (!(error instanceof Error)) {
-                throw error;
-            }
-        }
-
-        try {
-            (compiler as any).getExtraFilepath('/tmp/somefolder', '\\test.h').should.equal('/tmp/somefolder/test.h');
-        } catch (error) {
-            if (!(error instanceof Error)) {
-                throw error;
-            }
-        }
-
-        try {
-            (compiler as any).getExtraFilepath('/tmp/somefolder', 'test_hello/../../etc/passwd');
-            throw 'Should throw exception 5';
-        } catch (error) {
-            if (!(error instanceof Error)) {
-                throw error;
-            }
-        }
+        expect(compiler.getExtraFilepath('/tmp/somefolder', '/tmp/someotherfolder/test.h')).toEqual(
+            path.normalize('/tmp/somefolder/tmp/someotherfolder/test.h'),
+        );
 
         if (process.platform === 'win32') {
-            (compiler as any)
-                .getExtraFilepath('c:/tmp/somefolder', 'test.txt')
-                .should.equal('c:\\tmp\\somefolder\\test.txt');
-        } else {
-            (compiler as any).getExtraFilepath('/tmp/somefolder', 'test.txt').should.equal('/tmp/somefolder/test.txt');
+            expect(compiler.getExtraFilepath('/tmp/somefolder', '\\test.h')).toEqual('\\tmp\\somefolder\\test.h');
         }
 
-        try {
-            (compiler as any)
-                .getExtraFilepath('/tmp/somefolder', 'subfolder/hello.h')
-                .should.equal('/tmp/somefolder/subfolder/hello.h');
-        } catch (error) {
-            if (!(error instanceof Error)) {
-                throw error;
-            }
+        expect(() => compiler.getExtraFilepath('/tmp/somefolder', 'test_hello/../../etc/passwd')).toThrow(Error);
+
+        if (process.platform === 'win32') {
+            expect(compiler.getExtraFilepath('c:/tmp/somefolder', 'test.txt')).toEqual('c:\\tmp\\somefolder\\test.txt');
+        } else {
+            expect(compiler.getExtraFilepath('/tmp/somefolder', 'test.txt')).toEqual('/tmp/somefolder/test.txt');
         }
+
+        expect(compiler.getExtraFilepath('/tmp/somefolder', 'subfolder/hello.h')).toEqual(
+            path.normalize('/tmp/somefolder/subfolder/hello.h'),
+        );
+    });
+});
+
+describe('getDefaultExecOptions', () => {
+    let ce: CompilationEnvironment;
+
+    const noExecuteSupportCompilerInfo = makeFakeCompilerInfo({
+        remote: {
+            target: 'foo',
+            path: 'bar',
+            cmakePath: 'cmake',
+            basePath: '/',
+        },
+        lang: 'c++',
+        ldPath: [],
+        libPath: [],
+        extraPath: ['/tmp/p1', '/tmp/p2'],
+        exe: 'g++',
+    });
+
+    beforeAll(() => {
+        ce = makeCompilationEnvironment({
+            languages,
+            props: {
+                environmentPassThrough: '',
+                ninjaPath: '/usr/local/ninja',
+            },
+        });
+    });
+
+    it('Have all the paths', () => {
+        const compiler = new BaseCompiler(noExecuteSupportCompilerInfo, ce);
+        const options = compiler.getDefaultExecOptions();
+        expect(options.env).toHaveProperty('PATH');
+
+        const paths = options.env.PATH.split(path.delimiter);
+        expect(paths).toEqual(['/usr/local/ninja', '/tmp/p1', '/tmp/p2']);
+    });
+});
+
+describe('Target hints', () => {
+    let ce: CompilationEnvironment;
+
+    const noExecuteSupportCompilerInfo = makeFakeCompilerInfo({
+        exe: '/usr/bin/clang++',
+        lang: 'c++',
+        supportsTargetIs: true,
+        supportsTarget: true,
+        ldPath: [],
+        libPath: [],
+        extraPath: [],
+    });
+
+    beforeAll(() => {
+        ce = makeCompilationEnvironment({
+            languages,
+            props: {
+                environmentPassThrough: '',
+                ninjaPath: '/usr/local/ninja',
+            },
+        });
+    });
+
+    it('Should determine the target for Clang', async () => {
+        const compiler = new ClangCompiler(noExecuteSupportCompilerInfo, ce);
+
+        const args =
+            '-g -o output.s -mllvm --x86-asm-syntax=intel -S --gcc-toolchain=/opt/compiler-explorer/gcc-13.2.0 -fcolor-diagnostics -fno-crash-diagnostics --target=riscv64 example.cpp -isystem/opt/compiler-explorer/libs/abseil';
+        const argArray = splitArguments(args);
+        const hint = compiler.getTargetHintFromCompilerArgs(argArray);
+        expect(hint).toBe('riscv64');
+        const iset = await compiler.getInstructionSetFromCompilerArgs(argArray);
+        expect(iset).toBe('riscv64');
+    });
+});
+
+describe('Rust overrides', () => {
+    let ce: CompilationEnvironment;
+    const executingCompilerInfo = makeFakeCompilerInfo({
+        remote: {
+            target: '',
+            path: '',
+            cmakePath: '',
+            basePath: '/',
+        },
+        semver: 'nightly',
+        lang: 'rust',
+        ldPath: [],
+        libPath: [],
+        supportsExecute: true,
+        supportsBinary: true,
+        options: '',
+    });
+
+    beforeAll(() => {
+        ce = makeCompilationEnvironment({
+            languages,
+        });
+        props.initialize(path.resolve('./test/test-properties/rust'), ['local']);
+    });
+
+    afterAll(() => {
+        props.reset();
+    });
+
+    it('Empty options check', () => {
+        const compiler = new RustCompiler(executingCompilerInfo, ce);
+        expect(compiler.changeOptionsBasedOnOverrides([], [])).toEqual([]);
+    });
+
+    it('Should change linker if target is aarch64', () => {
+        const compiler = new RustCompiler(executingCompilerInfo, ce);
+        const originalOptions = compiler.optionsForFilter(
+            {
+                binary: true,
+                execute: true,
+            },
+            'output.txt',
+            [],
+        );
+        expect(originalOptions).toEqual([
+            '-C',
+            'debuginfo=2',
+            '-o',
+            'output.txt',
+            '--crate-type',
+            'bin',
+            '-Clinker=/usr/amd64/bin/gcc',
+        ]);
+        expect(
+            compiler.changeOptionsBasedOnOverrides(originalOptions, [
+                {
+                    name: CompilerOverrideType.arch,
+                    value: 'aarch64-linux-something',
+                },
+            ]),
+        ).toEqual(['-C', 'debuginfo=2', '-o', 'output.txt', '--crate-type', 'bin', '-Clinker=/usr/aarch64/bin/gcc']);
     });
 });

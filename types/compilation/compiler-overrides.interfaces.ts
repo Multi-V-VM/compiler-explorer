@@ -30,6 +30,7 @@ export enum CompilerOverrideType {
     env = 'env',
     edition = 'edition',
     stdver = 'stdver',
+    action = 'action',
 }
 
 export type CompilerOverrideTypes = Set<CompilerOverrideType>;
@@ -59,10 +60,16 @@ export type EnvVarOverride = {
 
 export type EnvVarOverrides = Array<EnvVarOverride>;
 
-export type ConfiguredOverride = {
-    name: CompilerOverrideType;
-    value?: string;
-    values?: EnvVarOverrides;
+export type ConfiguredOverrideGeneral = {
+    name: Exclude<CompilerOverrideType, CompilerOverrideType.env>;
+    value: string;
 };
+
+export type ConfiguredOverrideEnv = {
+    name: CompilerOverrideType.env;
+    values: EnvVarOverrides;
+};
+
+export type ConfiguredOverride = ConfiguredOverrideGeneral | ConfiguredOverrideEnv;
 
 export type ConfiguredOverrides = Array<ConfiguredOverride>;

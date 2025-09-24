@@ -24,18 +24,26 @@
 
 export type LanguageKey =
     | 'ada'
+    | 'algol68'
     | 'analysis'
+    | 'android-java'
+    | 'android-kotlin'
     | 'assembly'
     | 'c'
     | 'c++'
+    | 'c3'
     | 'carbon'
     | 'circle'
     | 'circt'
     | 'clean'
     | 'cmake'
+    | 'cmakescript'
     | 'cobol'
+    | 'coccinelle_for_c'
+    | 'coccinelle_for_cpp'
     | 'cpp_for_opencl'
     | 'cppx'
+    | 'snowball'
     | 'cppx_blue'
     | 'cppx_gold'
     | 'cpp2_cppfront'
@@ -44,14 +52,19 @@ export type LanguageKey =
     | 'cuda'
     | 'd'
     | 'dart'
+    | 'elixir'
     | 'erlang'
     | 'fortran'
     | 'fsharp'
+    | 'gimple'
+    | 'glsl'
     | 'go'
     | 'haskell'
     | 'hlsl'
     | 'hook'
+    | 'hylo'
     | 'ispc'
+    | 'il'
     | 'jakt'
     | 'java'
     | 'julia'
@@ -61,25 +74,42 @@ export type LanguageKey =
     | 'llvm_mir'
     | 'mlir'
     | 'modula2'
+    | 'mojo'
     | 'nim'
+    | 'nix'
+    | 'numba'
     | 'ocaml'
+    | 'odin'
     | 'objc'
     | 'objc++'
     | 'openclc'
     | 'pascal'
     | 'pony'
     | 'python'
+    | 'ptx'
     | 'racket'
+    | 'raku'
     | 'ruby'
     | 'rust'
+    | 'sail'
     | 'scala'
+    | 'slang'
     | 'solidity'
+    | 'spice'
+    | 'spirv'
+    | 'sway'
     | 'swift'
+    | 'tablegen'
     | 'toit'
+    | 'triton'
     | 'typescript'
+    | 'v'
     | 'vala'
     | 'vb'
-    | 'zig';
+    | 'vyper'
+    | 'wasm'
+    | 'zig'
+    | 'ylc';
 
 export interface Language {
     /** Id of language. Added programmatically based on CELanguages key */
@@ -96,14 +126,10 @@ export interface Language {
     formatter: string | null;
     /** Whether there's at least 1 compiler in this language that supportsExecute */
     supportsExecute: boolean | null;
-    /** Path in /views/resources/logos to the logo of the language */
-    logoUrl: string | null;
-    /** Path in /views/resources/logos to the logo of the language for dark mode use */
-    logoUrlDark: string | null;
-    /** Data from webpack */
-    logoData?: any;
-    /** Data from webpack */
-    logoDataDark?: any;
+    /** Path in /public/logos to the logo of the language */
+    logoFilename: string | null;
+    /** Path in /public/logos to the logo of the language for dark mode use */
+    logoFilenameDark: string | null;
     /** Example code to show in the language's editor */
     example: string;
     previewFilter: RegExp | null;
@@ -113,4 +139,5 @@ export interface Language {
     tooltip?: string;
     /** Default compiler for the language. This is populated when handed to the frontend. */
     defaultCompiler?: string;
+    digitSeparator?: string;
 }

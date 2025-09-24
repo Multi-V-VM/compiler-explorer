@@ -22,9 +22,12 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import path from 'path';
+import path from 'node:path';
 
+import {ExecutionOptionsWithEnv} from '../../types/compilation/compilation.interfaces.js';
+import {ParseFiltersAndOutputOptions} from '../../types/features/filters.interfaces.js';
 import {BaseCompiler} from '../base-compiler.js';
+
 import {CircleParser} from './argument-parsers.js';
 
 export class CircleCompiler extends BaseCompiler {
@@ -32,11 +35,11 @@ export class CircleCompiler extends BaseCompiler {
         return 'circle';
     }
 
-    protected override getArgumentParser() {
+    protected override getArgumentParserClass() {
         return CircleParser;
     }
 
-    override optionsForFilter(filters, outputFilename) {
+    override optionsForFilter(filters: ParseFiltersAndOutputOptions, outputFilename: string) {
         let options = [`-o=${this.filename(outputFilename)}`];
         if (this.compiler.intelAsm && filters.intel && !filters.binary) {
             options = options.concat(this.compiler.intelAsm.split(' '));
@@ -47,19 +50,24 @@ export class CircleCompiler extends BaseCompiler {
         return options;
     }
 
-    override getOutputFilename(dirPath, outputFilebase) {
+    override getOutputFilename(dirPath: string, outputFilebase: string) {
         // Do not add '.s' as default implementation does,
         // because circle emit assembly file instead of executable.
         return path.join(dirPath, outputFilebase);
     }
 
-    override runCompiler(compiler, options, inputFilename, execOptions) {
+    override async runCompiler(
+        compiler: string,
+        options: string[],
+        inputFilename: string,
+        execOptions: ExecutionOptionsWithEnv,
+    ) {
         if (!execOptions) {
             execOptions = this.getDefaultExecOptions();
         }
 
         execOptions.customCwd = path.dirname(inputFilename);
 
-        return super.runCompiler(compiler, options, inputFilename, execOptions);
+        return await super.runCompiler(compiler, options, inputFilename, execOptions);
     }
 }

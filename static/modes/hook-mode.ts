@@ -47,11 +47,11 @@ function definition(): monaco.languages.IMonarchLanguage {
             'let',
             'loop',
             'match',
-            'mut',
             'nil',
             'return',
             'struct',
             'true',
+            'var',
             'while',
             'while!',
         ],
@@ -180,5 +180,3 @@ function definition(): monaco.languages.IMonarchLanguage {
 
 monaco.languages.register({id: 'hook'});
 monaco.languages.setMonarchTokensProvider('hook', definition());
-
-export {};

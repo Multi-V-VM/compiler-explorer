@@ -22,10 +22,11 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import {ClientStateGoldenifier, ClientStateNormalizer} from '../lib/clientstate-normalizer.js';
-import {ClientState} from '../lib/clientstate.js';
+import fs from 'node:fs';
 
-import {fs} from './utils.js';
+import {describe, expect, it} from 'vitest';
+import {ClientState} from '../lib/clientstate.js';
+import {ClientStateGoldenifier, ClientStateNormalizer} from '../lib/clientstate-normalizer.js';
 
 describe('Normalizing clientstate', () => {
     it('Should translate 2 compilers GL layout to clientstate', () => {
@@ -34,12 +35,12 @@ describe('Normalizing clientstate', () => {
         const data = JSON.parse(fs.readFileSync('test/state/twocompilers.json', {encoding: 'utf8'}));
         normalizer.fromGoldenLayout(data);
 
-        const resultdata = JSON.parse(fs.readFileSync('test/state/twocompilers.json.normalized', {encoding: 'utf8'}));
+        const resultdata = JSON.parse(fs.readFileSync('test/state/twocompilers.normalized.json', {encoding: 'utf8'}));
 
         // note: this trick is to get rid of undefined parameters
         const normalized = JSON.parse(JSON.stringify(normalizer.normalized));
 
-        normalized.should.deep.equal(resultdata);
+        expect(normalized).toEqual(resultdata);
     });
 
     it('Should recognize everything and kitchensink as well', () => {
@@ -50,12 +51,12 @@ describe('Normalizing clientstate', () => {
         normalizer.fromGoldenLayout(data);
 
         const resultdata = JSON.parse(
-            fs.readFileSync('test/state/andthekitchensink.json.normalized', {encoding: 'utf8'}),
+            fs.readFileSync('test/state/andthekitchensink.normalized.json', {encoding: 'utf8'}),
         );
 
         const normalized = JSON.parse(JSON.stringify(normalizer.normalized));
 
-        normalized.should.deep.equal(resultdata);
+        expect(normalized).toEqual(resultdata);
     });
 
     it('Should support conformanceview', () => {
@@ -66,12 +67,12 @@ describe('Normalizing clientstate', () => {
         normalizer.fromGoldenLayout(data);
 
         const resultdata = JSON.parse(
-            fs.readFileSync('test/state/conformanceview.json.normalized', {encoding: 'utf8'}),
+            fs.readFileSync('test/state/conformanceview.normalized.json', {encoding: 'utf8'}),
         );
 
         const normalized = JSON.parse(JSON.stringify(normalizer.normalized));
 
-        normalized.should.deep.equal(resultdata);
+        expect(normalized).toEqual(resultdata);
     });
 
     it('Should support executors', () => {
@@ -81,11 +82,11 @@ describe('Normalizing clientstate', () => {
 
         normalizer.fromGoldenLayout(data);
 
-        const resultdata = JSON.parse(fs.readFileSync('test/state/executor.json.normalized', {encoding: 'utf8'}));
+        const resultdata = JSON.parse(fs.readFileSync('test/state/executor.normalized.json', {encoding: 'utf8'}));
 
         const normalized = JSON.parse(JSON.stringify(normalizer.normalized));
 
-        normalized.should.deep.equal(resultdata);
+        expect(normalized).toEqual(resultdata);
     });
 
     it('Should support newer features', () => {
@@ -95,11 +96,11 @@ describe('Normalizing clientstate', () => {
 
         normalizer.fromGoldenLayout(data);
 
-        const resultdata = JSON.parse(fs.readFileSync('test/state/executorwrap.json.normalized', {encoding: 'utf8'}));
+        const resultdata = JSON.parse(fs.readFileSync('test/state/executorwrap.normalized.json', {encoding: 'utf8'}));
 
         const normalized = JSON.parse(JSON.stringify(normalizer.normalized));
 
-        normalized.should.deep.equal(resultdata);
+        expect(normalized).toEqual(resultdata);
     });
 
     it('Allow output without editor id', () => {
@@ -113,7 +114,7 @@ describe('Normalizing clientstate', () => {
 
         const normalized = JSON.parse(JSON.stringify(normalizer.normalized));
 
-        normalized.should.deep.equal(resultdata);
+        expect(normalized).toEqual(resultdata);
     });
 });
 
@@ -125,8 +126,8 @@ describe('ClientState parsing', () => {
             ],
         });
 
-        state.sessions[0].compilers.length.should.equal(1);
-        state.sessions[0].executors.length.should.equal(0);
+        expect(state.sessions[0].compilers.length).toEqual(1);
+        expect(state.sessions[0].executors.length).toEqual(0);
     });
 
     it('Should work with executor', () => {
@@ -146,14 +147,14 @@ describe('ClientState parsing', () => {
             ],
         });
 
-        state.sessions[0].compilers.length.should.equal(0);
-        state.sessions[0].executors.length.should.equal(1);
+        expect(state.sessions[0].compilers.length).toEqual(0);
+        expect(state.sessions[0].executors.length).toEqual(1);
     });
 
     it('Should not contain id-less compilers', () => {
         const jsonStr = fs.readFileSync('test/state/bug-2231.json', {encoding: 'utf8'});
         const state = new ClientState(JSON.parse(jsonStr));
-        state.sessions[0].compilers.length.should.equal(1);
+        expect(state.sessions[0].compilers.length).toEqual(1);
     });
 });
 
@@ -161,7 +162,7 @@ describe('Trees', () => {
     it('ClientState to GL', () => {
         const jsonStr = fs.readFileSync('test/state/tree.json', {encoding: 'utf8'});
         const state = new ClientState(JSON.parse(jsonStr));
-        state.trees.length.should.equal(1);
+        expect(state.trees.length).toEqual(1);
 
         const gl = new ClientStateGoldenifier();
         gl.fromClientState(state);
@@ -169,7 +170,7 @@ describe('Trees', () => {
         const golden = JSON.parse(JSON.stringify(gl.golden));
 
         const resultdata = JSON.parse(fs.readFileSync('test/state/tree.goldenified.json', {encoding: 'utf8'}));
-        golden.should.deep.equal(resultdata);
+        expect(golden).toEqual(resultdata);
     });
 
     it('GL to ClientState', () => {
@@ -183,7 +184,7 @@ describe('Trees', () => {
 
         const resultdata = JSON.parse(fs.readFileSync('test/state/tree.normalized.json', {encoding: 'utf8'}));
 
-        normalized.should.deep.equal(resultdata);
+        expect(normalized).toEqual(resultdata);
     });
 
     it('GL to ClientState with correct output pane', () => {
@@ -199,13 +200,13 @@ describe('Trees', () => {
             fs.readFileSync('test/state/tree-gl-outputpane.normalized.json', {encoding: 'utf8'}),
         );
 
-        normalized.should.deep.equal(resultdata);
+        expect(normalized).toEqual(resultdata);
     });
 
     it('ClientState to Mobile GL', () => {
         const jsonStr = fs.readFileSync('test/state/tree-mobile.json', {encoding: 'utf8'});
         const state = new ClientState(JSON.parse(jsonStr));
-        state.trees.length.should.equal(1);
+        expect(state.trees.length).toEqual(1);
 
         const gl = new ClientStateGoldenifier();
         const slides = gl.generatePresentationModeMobileViewerSlides(state);
@@ -214,6 +215,36 @@ describe('Trees', () => {
         //fs.writeFileSync('test/state/tree-mobile.goldenified.json', JSON.stringify(golden));
 
         const resultdata = JSON.parse(fs.readFileSync('test/state/tree-mobile.goldenified.json', {encoding: 'utf8'}));
-        golden.should.deep.equal(resultdata);
+        expect(golden).toEqual(resultdata);
+    });
+});
+
+describe('bug-6380', () => {
+    it('Should goldenify properly', () => {
+        const jsonStr = fs.readFileSync('test/state/bug-6380.json', {encoding: 'utf8'});
+        const state = new ClientState(JSON.parse(jsonStr));
+
+        const gl = new ClientStateGoldenifier();
+        gl.fromClientState(state);
+
+        const golden = JSON.parse(JSON.stringify(gl.golden));
+
+        const normalizer = new ClientStateNormalizer();
+        normalizer.fromGoldenLayout(golden);
+    });
+});
+
+describe('overrides-and-runtimeTools', () => {
+    it('Should normalize overrides and runtimetools', () => {
+        const jsonGlStr = fs.readFileSync('test/state/libsegfault.json', {encoding: 'utf8'});
+        const golden = JSON.parse(jsonGlStr);
+
+        const normalizer = new ClientStateNormalizer();
+        normalizer.fromGoldenLayout(golden);
+
+        const normalized = JSON.parse(JSON.stringify(normalizer.normalized));
+
+        const resultdata = JSON.parse(fs.readFileSync('test/state/libsegfault.normalized.json', {encoding: 'utf8'}));
+        expect(normalized).toEqual(resultdata);
     });
 });

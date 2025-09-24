@@ -1,15 +1,13 @@
-// eslint-disable-next-line node/no-unpublished-import
-import {it} from 'mocha';
-
 import {assertNoConsoleOutput, stubConsoleOutput} from '../support/utils';
 
 const PANE_DATA_MAP = {
     executor: {name: 'Executor', selector: 'create-executor'},
     opt: {name: 'Opt Viewer', selector: 'view-optimization'},
+    stackusage: {name: 'Stack Usage Viewer', selector: 'view-stack-usage'},
     preprocessor: {name: 'Preprocessor', selector: 'view-pp'},
     ast: {name: 'Ast Viewer', selector: 'view-ast'},
     llvmir: {name: 'LLVM IR', selector: 'view-ir'},
-    pipeline: {name: 'Pipeline', selector: 'view-llvm-opt-pipeline'},
+    pipeline: {name: 'Pipeline', selector: 'view-opt-pipeline'},
     device: {name: 'Device', selector: 'view-device'},
     mir: {name: 'MIR', selector: 'view-rustmir'},
     hir: {name: 'HIR', selector: 'view-rusthir'},
@@ -21,6 +19,7 @@ const PANE_DATA_MAP = {
     tree: {name: 'Tree', selector: 'view-gnatdebugtree'},
     debug: {name: 'Debug', selector: 'view-gnatdebug'},
     cfg: {name: 'CFG', selector: 'view-cfg'},
+    explain: {name: 'Claude Explain', selector: 'view-explain'},
 };
 
 describe('Individual pane testing', () => {
@@ -38,8 +37,9 @@ describe('Individual pane testing', () => {
         });
     });
 
-    afterEach('Ensure no output in console', () => {
-        return cy.window().then(win => {
+    afterEach(() => {
+        // Ensure no output in console
+        return cy.window().then(_win => {
             assertNoConsoleOutput();
         });
     });
@@ -68,6 +68,8 @@ describe('Individual pane testing', () => {
     addPaneOpenTest(PANE_DATA_MAP.dump);
     addPaneOpenTest(PANE_DATA_MAP.tree);
     addPaneOpenTest(PANE_DATA_MAP.debug);
+    addPaneOpenTest(PANE_DATA_MAP.stackusage);
+    addPaneOpenTest(PANE_DATA_MAP.explain);
     // TODO: Bring back once #3899 lands
     // addPaneOpenTest(PaneDataMap.cfg);
 
@@ -90,8 +92,9 @@ describe('Individual pane testing', () => {
 describe('Known good state test', () => {
     beforeEach(() => {
         cy.visit(
-            // eslint-disable-next-line max-len
-            '/#z:OYLghAFBqd5TB8IAsQGMD2ATApgUWwEsAXTAJwBoiQIAzIgG1wDsBDAW1xAHIBGHpTqYWJAMro2zEHwAsQkSQCqAZ1wAFAB68ADIIBWMyozYtQ6AKQAmAELWblNc3QkiI2q2wBhTIwCuHCwgVpSeADJELLgAcgEARrjkIPIADpgqpG4sPv6BwZRpGa4iEVGxHAlJ8k64LlliJGzkJDkBQSE1dSINTSSlMfGJyY6Nza15HaN9kQMVQ7IAlI6YfuTo3DwA9JsA1AAqAJ4puDsHK%2BQ7WHg7KIm4lDsUO4yYbNg7pju4mpwpzAB0Fh0AEFIiQdioAI5%2BJq4CBgnYsAILHYWADsdhBO2xO3IuBIqxYiICOwAVMSOBYAMyY4HogAiPCWjF4AFZBEEeHpKJheF57PYIed1qirFSBJQSLomUsANYgVk6Yy8WSCDgKpWc7m8niCFQgJVSrlMyhwWBoLAsYTkDimdbUDzEMjkIjYIwmMwASTdlls9mWq3WvG2%2ByOJzOq0uOBOtzxDyeLzeHyJ31%2BAKBoNEEOhsPhWaRHBR6NpONx%2BMJFLJFOptIZJpZPHZlC1gh1PitFFtLBFADUiLgAO6JHYQQikJ7WcULQRGvQLJa3N5DCDMlVq4Ks5vSnm8PUGyXSpZmqBoch%2BFQkFBEKg0CBYDgpJiJaKcDbAAW2HZ4OhsPyMEiCLgToUK6RiGHwAZrBsIaHMcpznFG1yxvcjwXIm7yfKmD7piCCJQjCeJ5uCBZFhiGalniBLkESBZVgWNYZnWkp4rgoH8PWbIctuOoAErnuCAASno8TsfaDsO75%2Bp%2B36/v%2BI5js6orig8PgPk%2BFyTnw04Hsa86UIueBJCuyo8KqlDqlYm4tjuuqOPus4ypQ8qyEqDZUlxxo2TOh6mogx6oBgmBqcwN60Pej4hSAwAyX%2BJBCEwJCJPqEBxNucSRE0By8BK95cKIADyLCMFlnl4F2wDSKV161K4ABuuD6p53y1H4iXZYIYK4A23KMEQcTkJlPh4NuJAuuq7FLHQJjACoYkDvlxychKwiiBIUjcHICiiKoGjaJ54HGKY5gfg4vVxPqkBLJgKTFCwjV6l1NVZB4LDeL4bRGOEMzlJURiFJkIjjEEEH/bd/Q/UMEGdLdPRjO9eRQ49XQsLD0xlIMSRQ1MQNGBevTgxjMhLCowobcxuAbBKA6mCQC0kJ6HY%2BQ2TbWTqkl2NJuA/rFI78lJDg7ApE5ihBOyqRFw6adpDl6QZy5yhqJlmeqipbp5Op7oaPn%2BWgKwkCkrUOneQUS%2BQL5cLw7OCjF/6AcBLpuhBK3iJI0ibc7O1aNuB0DgNKTtaujYedqvD5a1BvgpgdA7FbnPc3JEDi%2BpSlad5ukLrgS5GYHysbmrIe2fqWu6b5yCnvxtroOQmDfCkRvhep5tvidX5c7JAGhPboEQQdJOBtBuyweGCFXDGdzxmhrwYSmPzYbggK4Vm%2BG5giJGomRWI4pRFa0eS9E0oxaKMuTrFuhNJks9xvB8ReOwALJsFXmCC5oKSmBkIiif2Q4XLHNit/HcEo57YpxUibZOUs05zgzlnWgOd1yWXzq2Xcdli7QKciAAAbK5Xg7kkFeR0ug%2BUVI0T/DFGKNErIACcaIqF8D4FYKwaITJWHXHwHQmor62RlqXWAfl%2BFlxAM1dArUKBGyaDNdQpgupiBQJgAcS1BANxMLdKRURGCyPkdZZRQxopt1ipQHR5Aw7iDkQo7cwjgTkBmig4RDRiCckEM7Nabt5AezUF7fa7ojoYBOsYPqF1jLXVuvdSCQYsYOLUTIsxiiT7tUoL7Ng/tz7M2Dsgng%2BBNAtUUn/AB7deZ%2BMFiAyBhDHJy2zhg1WDZc6INZigoupSjx%2BTQMAdgJA8BxD8MAUaFN67gJCk3S2LcbYdyAuOB2YFcak2DIPMM8FIyjxuOPVCzwp7Ji%2BLPP488Mx4RzIRVeyJ14li3uWailY94BAYiCJiPTT4BwvmkmyABxaIwI9g7HpLgTpwB9gsS/uJX%2Bwz9EJyFhpEWYDgqSxFtLQ8MDDJwKVggqyXDNaNN4SeEA14%2BmQrNq%2BIZ/M8mxTtuM7ulBe7TK2LMuCEYLiLOQhPVZSZMKbJwpmcEy99n5kOcWciJyqI0RJBcykB9rlHxnCxNiAhA6X3VrwMIYQex3x2MJf5P8Y5AsAfJYp4Kxb9KhVOKBZTM7wuMtUpF%2BCNaoLRTrEAKA2AqFlF1RgPg4y3iMYMnguSRnEudKS8l/cZmhmpSPaMSy4wrPQusrCWyF5suzAROEBzCxHN5dibeZzd7VhFXSMVJ9JUcSDha3gTyBJeF1XiVVEkNX5OAeM0BuqcUpxhenfSxr5aIvMnnOphd7KwsqTgngeDu2GqacgZpIBgnYtNh6r1wLRld0dmSqZAbKVBuHgs0N9KI1rOZWmbZi92V7MTVy5NPLN5ptOQKjgdFLnZpuRKs%2BUqHlFp4HTStgKCUjK1XWzSELTZNpHXC9t8oqlrk7bUlFVqeE2taWwdpXyulTsbniz11aiWdxJYu/1UFA1D3mbSzdyyEw7pnnu2NuyE1EQpKRY5F7%2BXnKzbWXNtz83SseTqF5byPkIZ%2BXNKtn653fsUr%2Bht/6SkyyAxUs14HkWyp7Wgk0NrGCMFqhwOm6giDHF6lEOaRseAAFo6AsEwPp4gKhJDkGwPp2qUg/C4H0%2BwLgKgeDbndSh2dgDBBlSOswfTKgDgVF8I1bk2AAgpEM3%2BRg%2BmOA4D/JTH1IFF0MH/IkfTkRLRqGhKwVwUh9NvxUGoRqy1FAuI2m4xQns9rcjQMp1T6nNNdRmLp3uSNErYAAGJ%2BG7LdeprWgIMzwNoJUGQOlNAAOqukvBuQ0D77mpJffKxVOw30aa0zMd96qBOatrcJnVScQoAcaZJhF0mLKyYLqi6D467UOqdQ0YASGBnubQ7bDDvqsPLpw6uvDNLEJj3DcRplpG57kaXkeqja8z3Agopehj%2B8mPHxY4%2BgtMqC4lrLWIPYTyNseZraC%2Bt%2B39WpyO622BpqwNnZfZdvtIGB1DsgxJypsh/h8EwWz9nHP2fyAbKwzt7DOFyZHeim1KQ65uo9MAQznY4PxLGe9owyXErkH0%2BU4LTiSuuzK1tZQHiqsGCMEjubnEX3qDxCkau6wCtPBMRHTbHN/5fp28LZSomIHQsA6Tk1CsrBUJZ5z/3bOAAcHbKfDqg9rcd6A6APbdXq3FFtUNbfbgliZPcjDBKyMldgtUiDADg89diBQUAHAyOgIrJpCi0AAPo16G5QGvVeso6GJpr3GfWOucg5cekgCxeB5uR2xl9Ty/YoBxy9oB%2BOROE7BQakn5STsU67ZBhpV3BF4Bz/aW86%2BiBBlsnLxLCuNfrRkOV7auvvZt%2BcD1iAngcYQS%2BujOYmMCjpABtkeGwMX9FCyATJ/l%2BnrdDYwf7/7Iyoy/6/RYy9B34jD4zfSExaT95G6FrdqfIb4nB8Yfr26Eograou7T6HaM7z7k6mTmph4r4R6CI3aOrKZeAcAcCPbPjPZJ7ob76p5LpQwUowRzK/Z0pEaTxA4bJkY7Jg6UZJo0applj0aZrw6HyI6zYpLG7dro5ix0Fj7ME4E/p7Zx4EF9pEHwIyZU7h4tryhWCB4s5WD0KB6yAkKWHWFohUgmT06C7WoCLmggD2pxSx44ozrj4p5%2Bqfa75cHBobpIR8GMrTyCEg7CGHqiEnriHnqSE7yCqMayHioUysbPrdrAi3wYF27WyCZO4z6iz4Hia6FtpSaL6qxkG9olw2pngXgcBYpeHTpMFYHepvYH5p4cErpBHroEahEA78ERHRqsoUYrxxEpoJHppXo3rCoI5pF3IKHIFcI3zgh3wqq5G448yFEE7aGlEtp6Eh7BCYL/A6BihUh0KB4MKB6YKsiyBULB7VEKajpuHADoDoChYPhGxV5uYJ5bGvY/Fx6kpV6sHAmG6F5vDYB4gFZ0wF4ShSCMCwnuCF5xAvDoCygqBImxK/HNzqEdx4CNBMCYk3Rwl%2BFJZH6uLa6VbbgtLvGfFi5vz0hhYX4QTaasCYBYnxIDTzQknIkSjNCMBMkPjbjQxARSIFYIrQzPQ36vTQEP6zAQFf5v7QGgw/5wF/6IxX71BAG5Cf5SmAGwGP6Kl4xwy6m4xTDgGQzEy9Rqa8mxJ4wkDEk9aF63JCnJLcjgkSh%2BCuicmF61TXROmkmD5KFeBlp7AsSbA8R7BhBqFtEFGT5aGNr7HoKHGnbBBUj/A0Js46BXGB5oh8BUiyCKghBPEk7yh8CkL5kWGyCB5UKYLVm1n1mOHsYoKM7yj1n/BoiYJdlWAuRWA5l5lojc68C87qj86GGM484tncJ9r1TkAfxBCyBAA',
+            // This URL manually created. If you need to update, run a local server like the docs/UsingCypress.md say,
+            // then paste this into your browser, make the changes, and then re-share as a full link.
+            'http://localhost:10240/#z:OYLghAFBqd5TB8IAsQGMD2ATApgUWwEsAXTAJwBoiQIAzIgG1wDsBDAW1xAHIBGHpTqYWJAMro2zEHwAsQkSQCqAZ1wAFAB68ADIIBWMyozYtQ6AKQAmAELWblNc3QkiI2q2wBhTIwCuHCwgVpSeADJELLgAcgEARrjkIPIADpgqpG4sPv6BwZRpGa4iEVGxHAlJ8k64LlliJGzkJDkBQSE1dSINTSSlMfGJyY6Nza15HaN9kQMVQ7IAlI6YfuTo3DwA9JsA1AAqAJ4puDsHK%2BQ7WHg7KIm4lDsUO4yYbNg7pju4mpwpzAB0Fh0AEFIiQdioAI5%2BJq4CBgnYsAILHYWADsdhBO2xO3IuBIqxYiICOwAVMSOBYAMyY4HogAiPCWjF4AFZBEEeHpKJheF57PYIed1qirFSBJQSLomUsANYgVk6Yy8WSCDgKpWc7m8niCFQgJVSrlMyhwWBoLAsYTkDimdbUDzEMjkIjYIwmMwASTdlls9mWq3WvG2%2ByOJzOq0uOBOtzxDyeLzeHyJ31%2BAKBoNEEOhsPhWaRHBR6NpONx%2BMJFLJFOptIZJpZPHZlC1gh1PitFFtLBFADUiLgAO6JHYQQikJ7WcULQRGvQLJa3N5DCDMlVq4Ks5vSnm8PUGyXSpZmqBoch%2BFQkFBEKg0CBYDgpJiJaKcDbAAW2HZ4OhsPyMEiCLgToUK6RjCKIEhSNwcgKKIqgaNoxqUIYfCOLgzjFEEECeOMQSoeEMzlJURiFJkIi4SR6RkSw/REUMqGdJhPRjL4bRGIx9RTLRgxJAxUwUXxvTcXMvFLCQeK4KBOiro2HLbjqABK57ggAEp6Ck7H2g7Du%2Bfqft%2Bv7/iOY7OqK4oPD4D5Phck58NOB7GvOlCLngSQrsqPCqpQ6pWJuLY7rqjj7rOMqUPKshKg2VJyUhOozoepqIMeqAYJgVnMDetD3o%2BGUgMABl/iQQhMCQiT6hAcTbnEkRNAcvAStV7DkAcADycT6LURoSveXCiC1LCMHVSF4HEfjAF4UiMPq/CCHgXbANIw3Xp1RAAG64NN3LfLUfilfVghguh26MEQcTkLVPh4Nu4lEOqM2UOt5BxOkuD0rg80nWYCV0CYwAqFpA4tccnISuB4iSNIMFg/BWjbihximOYH4OCdcT6pASyYCkmHTa2j0ung6PuRx7jYSw3isXk%2BHk8JxGoaRmECQUVGYbT9FoRhnG9EzJMsMx0xlDx7H8ZTeEjEJhFC3ZAZrNBlADqYJBAyQnodglDZNv5Oo7Lpdj6bgP6FcZwE2WKdnxY5C64EublyhqHleT5fnybuQWGglyVoBebDoLK55sMA9y3tl1kvlwvC64KBX/oBJugahYOQZD8jQ2osNIfDvMeOTTMEYLImUUUWRMwzWRs7xHMrd0Iu5GLvP8%2BXwvc6LTfNI30vibgklutJHmay7PA9L7OyqAHJwAzpyNfgbhngqOJtmahOyWTlw62fZIVOS5y4yY7G5brFrv6u7jmJcgaArCQKS7Q6d5pav5Bh2%2BU/RwBoRx26CeKEn0Ep4oMOIW5PDAc50Uj7Rkv3Q%2BPAWq7WvuCTAdAdYvxnkbCAK9rKLw3oeK2NtaC73XL5A%2B2oj7BQ9klU8ylbToHIJgb4KRb4hwyk/COyDDYx3fuOAmYFv4Q1/rBZQadAEGHYuhKuWEcIt2ptgduzMi7kUkbI6iMj641zYgxURXQ%2BZcUlgXQSLFa6twFrMOmYkJJSQgTFYhPAlIXh2AAWR9jQnY%2BBNApFMBkEQml%2BxDguJHfWbC54mQnGbCy98MHrwtnOHBrk8EOwIc7KBe4T5RLCiAAAbJFXg0UiGtldpvO2VI0T/DFGKNErIACcaJyl8D4FYKwaIPJWHXHwHQmoB6RJNMlJK3Tz4gG2ugXaFBb5ND%2BuoUw6ExAoEwAOEGghGFsEwmMqIjBJnTP8owoY%2BUUH/koBsx%2Br5XZ7JgeIKZMztz9OBOQP6rt%2BkNGIJyQQideEyD/nBQRcN3SIwwMjYwp0iaY2xlkXGPJ8aug2vAJYZ5RC3VwHsTAvh/kyyDHxe5SyJmnNmZKCS%2B15agPAX3SxuSeAuJ2qZPxNhp4BJHPyPSDhnELwiQ5FJ29bapMVHE7y%2B8tYkOSZ08heV2AkBGmNTuQcsphKYQcng5LKWz1jpw%2BO/Cf4vP4QAj56jOakwkQYqRMjS7yJ1Yo1mOi6aV00fzHmGimLaPzqa72%2Bi1Hizbia%2Bipiu7mIJTkgKABxaIwI9g7DeqNYA%2BwJJeO0r41hs9jacMXqE9Ka8zZYMts5a2MT3INj3oQ7lgVj5Mr5b068DCJXPilTK1%2B8rnSKszsKDYIZDjHFOOcKM1xYz3EeBcRM7xPipgfOmEECIoQwjxHmcEBYiwYgzKWPEBJyBEgLFWAsNYMx1ixe6t0M0LFep1GEMIPY7E7HUuGnxSDaWytQUE025ll4lqvebfNW8007w5U7bdPKH1n3NCAFAbAVCynQowHwcZg63uYdKqNhVK0gU/kq55UN/7vIziIzV4ic4KLzsY9m%2BrsgKOw8oq1XMHVUzNdaiWtr2b2paAoyj7c3XdwNFunN3qVJeBvXiY9k8z2vxjaZWy8aH6YI6Y%2B3BGa1ycuze0t2D67bsqioSgKQnP1IC/VjIqIGE37PDuBrj2y35AQVTBhg/5EgAFpTBSAOBkaaoMSqmY4EQFQagN3ciM6VcgJm3GOaAjip5UEVWpwQuqkjWRs4U0NRhuiFdsMlxZmXF1FcVHN0NYl515GEuqOIzR%2BLMg6OgXuiAtgYDN2epzcrDjkadNUvnrGvjN6NOCek6mkTMnMmeXiW%2B3NpDT6ewFQs4VwBi0abA%2BW3TUGuFfwgnB15AjAtIY1WI0LucabZfprFg1jq8MreC9XJLjqUtGMi4YnmNrMOiTXfR3uGt5M6l9f6wNuBg3ldPXrCl3Hqu8ZCXVgTjL8lNfTfg8TCSrFJI/T1xgjBVocGVuoIgxxPq4ABrfHgJm6AsEwCZ4gKhJDkGwCZ1aUg/C4BM%2BwLgKgeDbj2cNiD7C5qI2YCZlQBwKgIu3NgAIKQUd/kYCZjgOA/wbAlPpqthnbPuciJaNQ0JWCuCkB539ahrOPJ4X5%2BDbzZvcjQODyH0PYfoRmIjzOVqgIADE/DdkwkfI32BVZ4G0EqDII0mgAHVXSXg3IaMxG6BCMYHmVmHcOZhPZG1Vy9cavvhKTUJ6Jz7M3tZzSDzeSmUo/r/QBhoA31MPyp5VuVHDhfcMmyr6baq5vbdQ2Fx1EWpZGuLrhtbNEtv7ctShhujeMt1xO4djunuGMlYHsx1jYg9jeqD9TwJDLPvoIyg137LLYmx8Bx1hP2C2WteyfHxr8pWSyH%2BHwNJ%2B%2BD%2BH4P/IBsTTOUtLaYk0HPSv0pHocHD0wAUedgWTioX0GwKi5MyyzaSvC/J1VUQyASMFFTy29z7ygXUDxBSBoXWEcyeGOTgWeyjl0x42CWvSn0TSnCjz%2B2fXlCsHKV3yP2IP3wAA4X0uVJM81E8et0A6AM9xUhsy0x8xtq1kNOoTczdNFeAh1cwwQFheBzsPUrsOsvBjcR9g9o13t0Cl5MC71k1mUn1WUF9X0N9qCyFek8BVoiB7RbwtCdCNhWDDNlcACAt05gD5tuCyYK9iMq9dEa91tiNNs0t2DzV29XDSNUtTsjtqNO8pZcsvd6w2RrteA3ptDexvFOMXtz0jJpC71%2BMI9sDGs59RM2tF81Cus5wk9%2BUU9/1wcvAOAOBBss9mCc9IM88P8JtwYi9AD1dhFLCLdrCltpEttos685EG8XCGjCMqNksCMdsvCu8nVei9s/DdEAje8RCmMWNl5CjR8yjYjQ9as5CZ8V8UiWsKCJMr91Dut%2BU6ETBIhijQ5SjoiK0KjxtkIQCe9LtgjRCTA/BrgXE/g2BIhkD/EpCljJ9b1ViU11jV8OUMjeUnJT849JNft8DSDd8rAalSDZBCkYS4S0QqQPJ18wSNDYB%2BVf01NGCSitNJDyj38Lia1Aw61dgG1wxm0rgYw7h4xO1Xhu0Uwfg%2B1cBAQB0sxeCR0ERx1URJ0sQcQZ0KwF1yQl0aQV00RGQhDAifcoFgRbEJ4KtTjUC4iw8Vifs1ilD58xN1R2VATr9ekzwLx7NMo74mC8SWDzjFVfNTCEM6jLjuitU0NwtlsuiHCcNDVnDvD7StFdtMt%2BjvTBjq9KNjsyNPSJibjZIOsbFwQ7Ej15S3jXslTPiMDvi1TfiNTUis00l/gdAxQqRqlSDalSC0lt9ylyDdSaD%2BVgB0B0A2cHxhlsBsA8RHNlYQt7pJoWz3B7o4gXhfYVAOzMUepTBsAAB9GAg2IgbQdySnE4lAgJWafEF4qafst/D%2BT/ZgEnXAYclQPwOgBgScpYK0vhMwoRSgYAW6P4XAY3XAZc%2B6WHNgekdnILeHNHG8iUDc2Jc6QGQFTsiUZoRgB8h8bcRiICMZRzWJLOJo9DZ0z010mLDo/DFvdwr01vF0oM3wkMrvJYFQE6KHb8zFb2EgPsvCnFUVACorbkUAnuSgPwV0V8wQVaLGIii3YrKY/vLwVjPYCSTYBSPYMIeYxUkPCfZM%2BrVMxQ5rTYqkf4SpffHQAs0gtEPgKkWQRUEIcslfeUPgIpBS6E2QUg8pNJHSvSgylEkIwKcE9JKwf4NENJayqwCKKwWS%2BStEE/XgM/dUC/JfRrEEzy37R6DxIIWQIAA%3D%3D',
             {
                 onBeforeLoad: win => {
                     stubConsoleOutput(win);
@@ -100,8 +103,8 @@ describe('Known good state test', () => {
         );
     });
 
-    afterEach('Ensure no output in console', () => {
-        return cy.window().then(win => {
+    afterEach(() => {
+        return cy.window().then(_win => {
             assertNoConsoleOutput();
         });
     });

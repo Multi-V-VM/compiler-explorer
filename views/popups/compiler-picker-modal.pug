@@ -3,9 +3,7 @@
     .modal-content
       .modal-header
         h5.modal-title Compilers
-        button.close(type="button" data-dismiss="modal" aria-hidden="true" aria-label="Close")
-          span(aria-hidden="true")
-            | &times;
+        button.btn-close(type="button" data-bs-dismiss="modal" aria-hidden="true" aria-label="Close")
       .modal-body
         .card
           .card-body
@@ -16,11 +14,13 @@
                     input.compiler-search(value="" placeholder="🔍 Search for a compiler...")
               .row
                 .col-lg
-                  div.filters Instruction Sets:
+                  div.filters
+                    span.label Instruction Sets:
                     span.architectures
               .row
                 .col-lg
-                  div.filters Categories:
+                  div.filters
+                    span.label Categories:
                     span.compiler-types
               .row
                 .compilers-col.col-md

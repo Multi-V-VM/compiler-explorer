@@ -22,11 +22,14 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
-import {AssemblyInstructionInfo, BaseAssemblyDocumentationProvider} from './base.js';
+import type {AssemblyInstructionInfo} from '../../types/assembly-docs.interfaces.js';
+import {BaseAssemblyDocumentationProvider} from './base.js';
 import {getAsmOpcode} from './generated/asm-docs-amd64.js';
 
 export class Amd64DocumentationProvider extends BaseAssemblyDocumentationProvider {
-    private static readonly ATT_SUFFIX_REMOVER = /^([a-z]+)[blqw]$/i;
+    // abs is included as a suffix here for its use in movabs
+    // https://github.com/compiler-explorer/compiler-explorer/issues/4481
+    private static readonly ATT_SUFFIX_REMOVER = /^([a-z]+)(?:[blqw]|abs)$/i;
     public static get key() {
         return 'amd64';
     }

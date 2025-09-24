@@ -1,4 +1,17 @@
+@use 'themes/default-theme';
+@use 'themes/dark-theme';
+@use 'themes/pink-theme';
+@use 'themes/one-dark-theme';
+@use 'markdown.scss';
+
 @import '~@fortawesome/fontawesome-free/css/all.min.css';
+
+// SCSS function to generate TomSelect dropdown arrow SVG with custom color
+// Based on the SVG from tom-select.bootstrap5.css line 575 in selector:
+// .ts-wrapper:not(.form-control, .form-select).single .ts-control
+@function dropdown-arrow-svg($color) {
+    @return url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path fill='none' stroke='#{$color}' stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='m2 5 6 6 6-6'/></svg>");
+}
 
 /*
  * https://github.com/Microsoft/monaco-editor/issues/417
@@ -28,12 +41,49 @@ body {
     overflow: hidden;
 }
 
+// Styles for Claude Explain component
+.explain-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+}
+
+.explain-box {
+    padding: 15px;
+    background-color: #f8f9fa;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin: 15px;
+    margin-right: auto;
+    margin-left: auto;
+    max-width: 50em;
+}
+
+
+
+.explain-bottom-bar {
+    min-height: 2.5rem;
+}
+
+.ai-disclaimer {
+    display: flex;
+    align-items: center;
+    user-select: none;
+}
+
 .navbar-godbolt {
     padding: 0;
 }
 
 .navbar-brand {
     padding: 0;
+}
+
+// Fix for Bootstrap 5 navbar
+.navbar .container-fluid {
+    padding-left: 0;
 }
 
 .navbar-brand img.logo-overlay {
@@ -75,13 +125,23 @@ body {
 
 .compiler-picker {
     min-width: 14em;
+    flex-grow: 0.2 !important; // Ensures the compiler picker doesn't flex-grow too much and take up more space
+}
+
+// Prevent TomSelect items from spilling onto multiple lines
+.ts-wrapper .item {
+    white-space: nowrap;
+    overflow: hidden;
 }
 
 .compiler-picker .ts-input {
     text-align: center;
-    border-left: none !important;
-    border-top-left-radius: 0;
-    border-bottom-left-radius: 0;
+    border-left: none !important; /* Fallback for older browsers */
+    border-inline-start: none !important; /* Logical property for RTL support */
+    border-top-left-radius: 0; /* Fallback for older browsers */
+    border-bottom-left-radius: 0; /* Fallback for older browsers */
+    border-start-start-radius: 0; /* Logical property for RTL support */
+    border-end-start-radius: 0; /* Logical property for RTL support */
 }
 
 .function-picker {
@@ -133,7 +193,7 @@ li.tweet {
     margin: 0 10px 0 0;
 }
 
-.llvm-opt-function-picker {
+.opt-group-picker {
     min-width: 10em;
 }
 
@@ -142,6 +202,31 @@ li.tweet {
     margin: 0;
     padding: 0;
     overflow: hidden;
+}
+
+#printview {
+    display: none;
+    code {
+        font-family: Consolas, 'Liberation Mono', Courier, monospace, Consolas, 'Courier New', monospace;
+    }
+    .pagebreak {
+        page-break-before: always;
+    }
+    h1 {
+        font-size: 1.5em;
+    }
+    code {
+        color: black;
+    }
+}
+
+@media print {
+    #root {
+        display: none;
+    }
+    #printview {
+        display: block;
+    }
 }
 
 .lm_splitter.lm_vertical .lm_drag_handle {
@@ -269,6 +354,12 @@ pre.content.wrap * {
     }
 }
 
+#site-template-loader {
+    .modal-dialog {
+        min-width: 800px; /* ensure template modal has adequate width */
+    }
+}
+
 .modal-body {
     min-height: 200px;
     overflow-y: auto; /* make body scrollable -> keep Header & Footer onscreen, if possible */
@@ -319,7 +410,7 @@ pre.content.wrap * {
     padding-right: 4px;
 }
 
-@media (max-width: 1200px) {
+@media (max-width: 1400px) {
     .community-advert {
         display: none;
     }
@@ -344,36 +435,47 @@ pre.content.wrap * {
     max-width: 40%;
 }
 
+#notifications {
+    z-index: 6;
+}
+
 .toast {
     max-width: 100% !important;
 }
 
-.toast-header .close {
+.toast-header .btn-close {
     float: left;
     margin-right: 5px;
 }
 
+.toast a {
+    text-decoration: underline !important;
+}
+
 .font-size-list {
-    min-width: 43px !important;
-    max-height: 70% !important;
-    overflow-y: scroll;
+    min-width: 60px !important;
+    max-height: 70vh !important;
+    overflow-y: auto;
     width: auto;
     // For my fellow Firefox users
     scrollbar-width: thin;
+    padding: 0.25rem 0;
 }
 
 .font-size-list button {
     margin-left: 0 !important;
     border-radius: 0;
+    width: 100%;
+    text-align: center;
+    padding: 0.25rem 0.5rem;
+}
+
+.font-size-list button:hover {
+    background-color: rgba(0, 0, 0, 0.075);
 }
 
 .font-option {
     text-align: center;
-}
-
-.opt-decoration {
-    width: 8px !important;
-    left: 3px;
 }
 
 .compiler-list {
@@ -440,11 +542,10 @@ pre.content.wrap * {
         font-size: x-small;
         font-style: italic;
     }
-}
 
-.clear-cache {
-    position: absolute;
-    right: 0;
+    .options button {
+        height: 100%;
+    }
 }
 
 .change-language {
@@ -465,18 +566,6 @@ pre.content.wrap * {
 
 .header-fontscale {
     padding-right: 1em;
-}
-
-.local-file {
-    display: none;
-}
-
-.save-file {
-    display: none;
-}
-
-.save-btn {
-    margin-left: 5px;
 }
 
 label#vim-label {
@@ -516,6 +605,10 @@ input.vim-check {
 .program-exec-output {
     font-family: 'Courier New', Courier, monospace;
     padding-left: 2%;
+}
+
+.execution-stdoutstderr {
+    overflow: unset;
 }
 
 .lib-arrow {
@@ -578,7 +671,9 @@ kbd {
     border-radius: 4px;
     padding: 0.1em 0.5em;
     margin: 0 0.2em;
-    box-shadow: 0 1px 0px rgba(0, 0, 0, 0.2), 0 0 0 2px #fff inset;
+    box-shadow:
+        0 1px 0px rgba(0, 0, 0, 0.2),
+        0 0 0 2px #fff inset;
 }
 
 #simplecook {
@@ -607,6 +702,7 @@ kbd {
 
 .linked-compiler-output-line {
     cursor: pointer;
+    color: var(--terminal-bright-blue) !important;
 }
 
 .lm_content {
@@ -669,10 +765,6 @@ div.populararguments div.dropdown-menu {
     overflow-y: scroll;
 }
 
-#overrides-selection .override-search-button {
-    margin-left: 10px;
-}
-
 #overrides-selection .overrides-how-to-use {
     font-size: smaller;
 }
@@ -720,6 +812,72 @@ div.populararguments div.dropdown-menu {
     display: none;
 }
 
+#runtimetools-selection .modal-body {
+    overflow-y: scroll;
+}
+
+#runtimetools-selection .runtimetools-how-to-use {
+    font-size: smaller;
+}
+
+#runtimetools-selection .runtimetools-selected-col {
+    padding: 0 15px 0 0;
+    min-width: 250px;
+    max-width: 250px;
+}
+
+#runtimetools-selection .runtimetools-results-col {
+    padding: 0 0 0 0;
+    min-width: 450px;
+    max-width: 650px;
+}
+
+#runtimetools-selection .runtimetool-results-items .card {
+    margin-bottom: 3px;
+}
+
+#runtimetools-selection.mobile .runtimetools-results-col {
+    min-width: 250px;
+    max-width: 450px;
+}
+
+#runtimetools-selection .runtimetools-results-col span.override {
+    float: right;
+}
+
+#runtimetools-selection .runtimetools-results-col span.override-fav {
+    float: right;
+}
+
+#runtimetools-selection .runtimetools-favorites-col {
+    padding: 0 0 0 15px;
+    min-width: 325px;
+    max-width: 350px;
+}
+
+#runtimetools-selection .runtimetools-favorites-col button {
+    width: 300px;
+}
+
+#runtimetools-selection.mobile .runtimetools-favorites-col {
+    display: none;
+}
+
+#runtimetools-selection .runtime-tool-option {
+    line-height: 35px;
+}
+#runtimetools-selection .tool-option-name {
+    display: inline-block;
+    min-width: 150px;
+}
+#runtimetools-selection .tool-option-select {
+    min-width: 100px;
+}
+
+#runtimetools-selection .tool-fav {
+    float: right;
+}
+
 .ces-content-root {
     min-height: 100px;
     max-height: calc(
@@ -734,15 +892,16 @@ div.populararguments div.dropdown-menu {
 
 #ces-banner-text {
     margin-right: 0.1em;
+    font-size: small;
 }
 
 @media (max-width: 1000px) {
-    .ces-content-root {
-        font-size: 60%;
+    #ces {
+        display: none;
     }
 }
 
-@media (max-width: 1250px) {
+@media (max-width: 1200px) {
     #ces-banner-text {
         display: none;
     }
@@ -778,10 +937,11 @@ div.populararguments div.dropdown-menu {
 .ces-item-title {
     font-size: 200%;
     font-weight: bold;
+    flex-grow: 1;
 }
 
 .ces-item-title img {
-    margin: 0.5em;
+    margin: auto 0.5em auto 0.5em;
 }
 .ces-level-selectors {
     padding-bottom: 5px;
@@ -799,17 +959,18 @@ div.populararguments div.dropdown-menu {
 }
 
 .corporate .ces {
-    font-size: 165%;
-    height: 9em;
+    .btn {
+        --bs-btn-font-size: 24px;
+    }
+    height: 20em;
 }
 
 .legendary .ces {
-    font-size: 165%;
-    height: 7em;
-}
-
-.legendary .ces button {
-    padding: 1em;
+    .btn {
+        --bs-btn-font-size: 24px;
+        padding: 1em;
+    }
+    height: 20em;
 }
 
 .ces-logo {
@@ -831,7 +992,8 @@ div.populararguments div.dropdown-menu {
 }
 
 .ces-item-description {
-    margin: auto;
+    flex-grow: 1;
+    margin: auto 0.5em auto 0.5em;
 }
 
 #library-selection .modal-body {
@@ -893,25 +1055,6 @@ div.populararguments div.dropdown-menu {
     display: none;
 }
 
-@media (max-width: 830px) {
-    #compiler-picker-modal {
-        .compilers-row {
-            flex-direction: column-reverse;
-        }
-    }
-}
-
-@media (max-width: 1200px) {
-    #compiler-picker-modal {
-        .compilers-col {
-            .compilers {
-                width: 300px !important;
-                columns: 1 300px !important;
-            }
-        }
-    }
-}
-
 #compiler-picker-modal {
     .modal-body {
         overflow-y: scroll;
@@ -925,6 +1068,11 @@ div.populararguments div.dropdown-menu {
 
     .filters {
         margin-top: 10px;
+        word-break: break-all;
+    }
+
+    .label {
+        white-space: nowrap;
     }
 
     .architecture,
@@ -934,6 +1082,11 @@ div.populararguments div.dropdown-menu {
         margin: 0 0 0 3px;
         cursor: pointer;
         user-select: none;
+        white-space: nowrap;
+    }
+
+    .card-body > .container {
+        max-width: 650px + 15px + 15px + 350px !important;
     }
 
     .compilers-col {
@@ -992,6 +1145,34 @@ div.populararguments div.dropdown-menu {
     }
 }
 
+@media (max-width: 1200px) {
+    #compiler-picker-modal {
+        .card-body > .container {
+            max-width: 330px + 15px + 15px + 330px !important;
+        }
+        .compilers-col {
+            .compilers {
+                width: 300px !important;
+                columns: 1 300px !important;
+            }
+        }
+    }
+}
+
+@media (max-width: 830px) {
+    #compiler-picker-modal {
+        .card-body > .container {
+            max-width: 330px !important;
+        }
+        .compilers-row {
+            flex-direction: column-reverse;
+        }
+        .compilers-col .favorites {
+            margin-left: 0px !important;
+        }
+    }
+}
+
 #timing-info .modal-content {
     min-width: 500px;
     min-height: 400px;
@@ -1001,7 +1182,7 @@ div.populararguments div.dropdown-menu {
     margin-right: 2pt;
 }
 
-span.badge.badge-pill {
+span.badge.rounded-pill {
     margin-left: 2pt;
 }
 
@@ -1011,14 +1192,14 @@ span.badge.badge-pill {
 }
 
 html[data-theme='default'] {
-    @import 'themes/default-theme';
+    @import '~golden-layout/src/css/goldenlayout-light-theme';
     .theme-light-only {
         display: inline;
     }
 }
 
 html[data-theme='dark'] {
-    @import 'themes/dark-theme';
+    @import '~golden-layout/src/css/goldenlayout-dark-theme';
     background-color: #333 !important;
     .theme-dark-only {
         display: inline;
@@ -1026,9 +1207,15 @@ html[data-theme='dark'] {
 }
 
 html[data-theme='pink'] {
-    @import 'themes/pink-theme';
-    background-color: #f5f0f4 !important;
+    background-color: var(--lighter) !important;
     .theme-light-only {
+        display: inline;
+    }
+}
+
+html[data-theme='one-dark'] {
+    background-color: var(--light) !important;
+    .theme-dark-only {
         display: inline;
     }
 }
@@ -1063,11 +1250,21 @@ html[data-theme='pink'] {
     padding-right: 2rem !important;
 }
 
+
+// Fix Bootstrap 5's input-group border overlap issues with TomSelect
+// Bootstrap applies a -1px margin to elements matching `:not(:first-child)` in input groups
+// TomSelect creates a wrapper (.ts-wrapper) around the select element, which becomes a
+// child of the input-group. This wrapper gets the negative margin, causing it to shift
+// left by 1px and visually overflow its container boundary.
+.input-group > .ts-wrapper:not(:first-child) {
+  margin-left: 0 !important; // Reset Bootstrap's negative margin for TomSelect wrappers
+}
+
 .copy-link-btn {
     padding-top: 0;
 }
 
-.conformance-wrapper .compiler-list .form-row {
+.conformance-wrapper .compiler-list .row {
     padding-top: 3px;
 }
 
@@ -1107,8 +1304,10 @@ html[data-theme='pink'] {
 
 .prepend-options,
 .picker-popout-button {
-    border-top-right-radius: 0;
-    border-bottom-right-radius: 0;
+    border-top-right-radius: 0; /* Fallback for older browsers */
+    border-bottom-right-radius: 0; /* Fallback for older browsers */
+    border-start-end-radius: 0; /* Logical property for RTL support */
+    border-end-end-radius: 0; /* Logical property for RTL support */
 }
 
 .picker-popout-button {
@@ -1135,7 +1334,9 @@ html[data-theme='pink'] {
 }
 
 .popular-arguments-btn {
-    border-top-right-radius: 0;
+    border-top-right-radius: 0; /* Fallback for older browsers */
+    border-start-end-radius: 0; /* Logical property for RTL support */
+    height: 100%;
 }
 
 .panel-compilation {
@@ -1145,10 +1346,6 @@ html[data-theme='pink'] {
 
 .compiler-out {
     cursor: help;
-}
-
-.compiler-selector-icon {
-    padding: 0 4px 0 4px !important;
 }
 
 .load-project-from-file {
@@ -1193,34 +1390,66 @@ html[data-theme='pink'] {
     > div {
         padding: 0;
         flex-shrink: 0;
+        &.site-templates-list-col {
+            min-width: 150px;
+            width: 20%;
+        }
         &.site-template-preview-col {
             flex-grow: 1;
             flex-shrink: 1;
+            min-width: 400px;
             img {
+                width: 1000px;
+                aspect-ratio: 1000 / 800;
                 max-width: 100%;
             }
         }
     }
 }
 
-#site-templates-list {
+#site-templates-list,
+#site-user-templates-list {
     list-style-type: none;
     margin: 0;
     padding: 0;
     li {
         margin: 0;
         padding: 0;
-        background: rgba(0, 0, 0, 0.2);
-        padding: 3px 5px;
+        display: flex;
+        justify-content: space-between;
         margin-bottom: 4px;
-        cursor: pointer;
-        &:hover {
-            background: rgba(0, 0, 0, 0.4);
+        gap: 3px;
+        .title {
+            flex: 1 1 auto;
         }
+        .title,
+        .delete {
+            background: rgba(0, 0, 0, 0.2);
+            padding: 3px 5px;
+            &:hover {
+                background: rgba(0, 0, 0, 0.4);
+            }
+        }
+        cursor: pointer;
     }
 }
 
-.llvm-opt-pipeline-body {
+#add-user-template {
+    margin: 0;
+    padding: 0;
+    background: rgb(0, 123, 255);
+    color: white;
+    padding: 3px 5px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    border: 2px solid rgb(0, 123, 255);
+    border-radius: 2px;
+    &:hover {
+        background: rgb(0, 123, 255);
+    }
+}
+
+.opt-pipeline-body {
     display: flex;
     overflow: hidden;
     align-items: stretch;
@@ -1294,5 +1523,205 @@ html[data-theme='pink'] {
 
 .popover-body {
     max-height: calc(100vh - 50px);
-    overflow: scroll;
+    overflow: auto;
+}
+
+// This is part of a fix for #4714
+.lm_tabs {
+    overflow: hidden;
+    max-height: 100%;
+}
+
+// shamelessly stolen from https://css-tricks.com/snippets/css/shake-css-keyframe-animation/
+@keyframes shake {
+    10%,
+    90% {
+        transform: translate3d(calc(var(--shake-amount) * -25%), 0, 0);
+    }
+
+    20%,
+    80% {
+        transform: translate3d(calc(var(--shake-amount) * 50%), 0, 0);
+    }
+
+    30%,
+    50%,
+    70% {
+        transform: translate3d(calc(var(--shake-amount) * -1), 0, 0);
+    }
+
+    40%,
+    60% {
+        transform: translate3d(var(--shake-amount), 0, 0);
+    }
+}
+
+.shake {
+    animation: shake 0.82s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+    transform: translate3d(0, 0, 0);
+}
+
+.compiler-arg-warning-icon {
+    --shake-amount: 2px;
+}
+
+.compiler-arg-warning {
+    $sidebar-width: 20px;
+    $border-width: 2px;
+    margin-left: $sidebar-width;
+    position: relative;
+    border: $border-width solid;
+    padding: 0 5px;
+    margin-bottom: 5px;
+    &:before {
+        position: absolute;
+        top: -$border-width;
+        left: -$sidebar-width;
+        width: $sidebar-width;
+        height: calc(100% + 2 * $border-width);
+        border: $border-width solid;
+        content: '\f071';
+        color: #292726;
+        font-family: 'Font Awesome 6 Free';
+        font-weight: 900;
+        text-align: center;
+    }
+    &:first-child {
+        margin-top: 5px;
+    }
+}
+
+#real-dark {
+    display: none; // turned on conditionally by a script
+    background: rgb(2, 0, 36);
+    background: radial-gradient(
+        circle,
+        rgba(2, 0, 36, 0) 0%,
+        rgba(0, 0, 0, 0) 4%,
+        rgba(0, 0, 0, 1) 28%,
+        rgba(0, 0, 0, 1) 100%
+    );
+    width: 200vw;
+    height: 200vh;
+    top: -50vh;
+    left: -50vw;
+    position: fixed;
+    z-index: 100000000000000;
+    // square with a little hole in the middle
+    clip-path: polygon(0% 0%, 0% 100%, 49% 100%, 49% 49%, 51% 49%, 51% 51%, 49% 51%, 49% 100%, 100% 100%, 100% 0%);
+}
+
+@keyframes rotate {
+    100% {
+        transform: rotate(1turn);
+    }
+}
+
+#true-dark {
+    .content {
+        display: none; // turned on conditionally by a script
+        font-weight: bold;
+        font-size: 18px;
+        padding: 10px 30px;
+        background: #1a1a1a;
+        color: white;
+        position: absolute;
+        top: 5px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 1000; // below a modal
+        border-radius: 5px;
+        cursor: pointer;
+        box-shadow:
+            0 3px 6px rgba(0, 0, 0, 0.16),
+            0 3px 6px rgba(0, 0, 0, 0.23);
+
+        background-image: linear-gradient(
+            122deg,
+            rgba(255, 255, 255, 0) 0%,
+            rgba(255, 255, 255, 0) 40%,
+            rgba(255, 255, 255, 0.5) 50%,
+            rgba(255, 255, 255, 0) 60%,
+            rgba(255, 255, 255, 0) 100%
+        );
+        animation: glide 10s linear infinite;
+
+        background-size: 200px 50px;
+
+        @keyframes glide {
+            0%,
+            90% {
+                background-position: 0vw;
+            }
+            90%,
+            100% {
+                background-position: 20vw;
+            }
+        }
+
+        .dark-close {
+            position: absolute;
+            bottom: 0;
+            right: -12px;
+            padding: 0;
+            background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, #1a1a1a 48%, #1a1a1a 100%);
+            width: 24px;
+            height: 24px;
+            border-radius: 100%;
+            opacity: 1 !important;
+            text-shadow: none !important;
+            float: none !important;
+            font-size: 16px;
+            line-height: 24px;
+            vertical-align: middle;
+            text-align: center;
+            cursor: pointer;
+            color: white;
+            &:hover {
+                background: #313131;
+            }
+        }
+    }
+}
+
+:root {
+    // Default terminal 3 and 4 bit color codes, colors come from the original ansi-to-html script
+    // A theme should override these to make them look nicer, this can be done at the `body` level
+    --terminal-black: #000;
+    --terminal-red: #a00;
+    --terminal-green: #0a0;
+    --terminal-yellow: #a50;
+    --terminal-blue: #00a;
+    --terminal-magenta: #a0a;
+    --terminal-cyan: #0aa;
+    --terminal-white: #aaa;
+    --terminal-bright-black: #555;
+    --terminal-bright-red: #f55;
+    --terminal-bright-green: #5f5;
+    --terminal-bright-yellow: #ff5;
+    --terminal-bright-blue: #55f;
+    --terminal-bright-magenta: #f5f;
+    --terminal-bright-cyan: #5ff;
+    --terminal-bright-white: #fff;
+}
+
+span.lib-info {
+    cursor: pointer;
+    margin-left: 10px;
+}
+.library-info-popover {
+    max-width: 600px;
+}
+
+button.new-pane-button:disabled:after {
+    content: ' [already open]';
+}
+
+// Ensure goldenlayout tabs are on top of the minimap
+.lm_header .lm_tabdropdown_list {
+    z-index: 6; // 5 by default, same as the minimap
+}
+
+.link-primary {
+    cursor: pointer;
 }

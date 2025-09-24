@@ -22,24 +22,24 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+import fs from 'node:fs';
 import _ from 'underscore';
+import {afterAll, beforeAll, describe, expect, it} from 'vitest';
 
 import {unwrap} from '../lib/assert.js';
 import {languages} from '../lib/languages.js';
 import * as properties from '../lib/properties.js';
 
-import {fs} from './utils.js';
-
 describe('Live site checks', () => {
     let ceProps;
     let compilerProps;
 
-    before(() => {
+    beforeAll(() => {
         properties.initialize('etc/config/', ['amazon']);
         ceProps = properties.propsFor('compiler-explorer');
         compilerProps = new properties.CompilerProps(languages, ceProps);
     });
-    after(() => {
+    afterAll(() => {
         properties.reset();
     });
 
@@ -65,9 +65,7 @@ describe('Live site checks', () => {
                 differences[lang] = difference;
             }
         });
-        differences.should.be.eql(
-            {},
-            'One or more defined libraries are not listed on their corresponding language libs property array',
-        );
+        // One or more defined libraries are not listed on their corresponding language libs property array
+        expect(differences).toEqual({});
     });
 });

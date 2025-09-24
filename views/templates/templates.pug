@@ -20,7 +20,13 @@ mixin monacopane(id)
 
   include panes/pp
 
-  include panes/llvm-opt-pipeline
+  include panes/ir
+
+  include panes/clangir
+
+  include panes/opt-view
+
+  include panes/opt-pipeline
 
   include panes/device
 
@@ -31,6 +37,8 @@ mixin monacopane(id)
   include panes/conformance
 
   include panes/tree
+  
+  include panes/explain
 
   include widgets/compiler-selector
 
@@ -50,15 +58,15 @@ mixin monacopane(id)
 
   include widgets/possible-override-tpl
 
+  include widgets/possible-runtime-tool-tpl
+
   include widgets/overrides-favorite-tpl
 
-  +monacopane("opt")
+  +monacopane("stackusage")
 
   +monacopane("flags")
 
   +monacopane("ast")
-
-  +monacopane("ir")
 
   +monacopane("tool-input")
 

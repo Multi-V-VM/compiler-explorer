@@ -22,6 +22,8 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+import {BaseCompiler} from '../base-compiler.js';
+
 import {CppDemangler} from './cpp.js';
 
 export class TiC2000Demangler extends CppDemangler {
@@ -29,8 +31,7 @@ export class TiC2000Demangler extends CppDemangler {
         return 'tic2000';
     }
 
-    constructor(demanglerExe, compiler) {
-        super(demanglerExe, compiler);
-        this.demanglerArguments = ['-q'];
+    constructor(demanglerExe: string, compiler: BaseCompiler) {
+        super(demanglerExe, compiler, ['-q']);
     }
 }
